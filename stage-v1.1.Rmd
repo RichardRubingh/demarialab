@@ -19,7 +19,6 @@ First we need to include the R-packages used in the experiment.
 ```{r libraries, results='hide', message=FALSE, warning=FALSE,cache=TRUE}
 #source("http://bioconductor.org/biocLite.R")
 
-
 #biocLite("genefilter")
 #biocLite("geneplotter")
 #biocLite("DESeq2")
@@ -38,6 +37,17 @@ library("genefilter")
 library("pheatmap")
 library("VennDiagram")
 library("HTSFilter")
+library(calibrate)
+library(ggplot2)
+library(gridExtra)
+
+# Load packages
+library(dplyr)
+library(ggplot2)
+
+
+
+
 ```
 
 ## Loading the data-sets
@@ -234,14 +244,13 @@ return(x[found.as.protein, ])
 
 
 PlotPCADESeq <- function(rld,colorPCA,shapePCA,intCol,intShape,xMin,xMax,yMin,yMax,titleName="PCA plot\n",colorName="Cell strain/tissue\n",shapeName="\nCell condition") {
-  # Extract only protein coding genes from a data-set.
+  # Plot PCA plot of using count data from RNA-seq. 
   #
   # Args:
   #   x: DESeqDataSet
   #
   # Returns:
-  # DESeqDataSet containing only protein coding genes
-  # protein.coding.genes can be changed manually or and updated 
+  # PCA plot 
   
   
   # Error handling
@@ -294,14 +303,13 @@ return(PCAplot)
 
 
 DdsHTSfilter <- function(x,contrastValues) {
-  # Extract only protein coding genes from a data-set.
+  # Filter count data using HTSFilter, results in uniform data..
   #
   # Args:
   #   x: DESeqDataSet
   #
   # Returns:
-  # DESeqDataSet containing only protein coding genes
-  # protein.coding.genes can be changed manually or and updated 
+  # Uniform dataset
   
   
   # Error handling
@@ -326,14 +334,13 @@ return(res)
 
 
 EdgeRTopTags <- function(x,modelDesign,coefString) {
-  # Extract only protein coding genes from a data-set.
+  # EdgeR differential expression analysis.
   #
   # Args:
   #   x: DESeqDataSet
   #
   # Returns:
-  # DESeqDataSet containing only protein coding genes
-  # protein.coding.genes can be changed manually or and updated 
+  # EdgeR results object
   
   
   # Error handling
@@ -360,14 +367,14 @@ return(edgerRes)
 
 
 EdgeRTopTagsSingleDesign <- function(x,pairVec,cond) {
-  # Extract only protein coding genes from a data-set.
+  # EdgeR differential expression analysis using single design factor.
   #
   # Args:
   #   x: DESeqDataSet
   #
   # Returns:
-  # DESeqDataSet containing only protein coding genes
-  # protein.coding.genes can be changed manually or and updated 
+  # Returns:
+  # EdgeR results object
   
   
   # Error handling
@@ -1007,7 +1014,7 @@ make a difference specific for senescence.
 
 
 
-```{r pca13, cache=TRUE, out.width="900px"}
+```{r pca13, cache=TRUE}
 
 #prepare pca data
 rv = rowVars(assay(replictiveSen.rld))
@@ -1036,31 +1043,16 @@ round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
 ) 
 }
 
-
-
-
-```
-
-Create the pca plots in a single image( more compact ). 
-
-```{r pca131, cache=TRUE, out.width="1000px"}
-
-
-
+#~ 
 plots = lapply(c(1:nrow(pcaCombinations)), function(.x) 
 
-qplot(scores[,pcaCombinations[.x,1]],scores[,pcaCombinations[.x,2]],main=paste("Combination",.x),
+qplot(scores[,pcaCombinations[.x,1]],scores[,pcaCombinations[.x,2]],main=paste("plot",.x),
  shape=replictiveSen.cellStrain,
-color=replictiveSen.condition) + theme(
-axis.text=element_text(size=6),
-        axis.title=element_text(size=10,face="bold"
-        
-        
-        ),legend.position="none",plot.title = element_text(size = 10)) + 
+color=replictiveSen.condition) + theme(legend.position="none") + 
 geom_point(size = 3) + 
-xlab(paste( pc1,"%Var: ",
+xlab(paste( pc1,"Percentage variance : ",
 round(summary(pca_data)$importance[,pc1][2] * 100, digits = 2))) + 
-ylab(paste( pc2,"%Var: ",
+ylab(paste( pc2,"Percentage variance : ",
 round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
 
 
@@ -1068,11 +1060,6 @@ round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
 
 
 layout <-  matrix(c(1,2,3,4,5,6,6,6,6,6), 2, 5, byrow = TRUE)
-
-
-
-
-
 
 
 multiplot(plotlist = plots, layout = layout)
@@ -1535,7 +1522,6 @@ radiation.csv.o2log <- radiation.csv[order(radiation.csv[,"log2FoldChange"], dec
 #~ write.csv(row.names=F,radiation.csv.o2log, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_M_radiation-FC-01-final.csv")
 
 ```
-#~ 2=======================================================================================================================================
 ## EdgeR 
 
 Because of the lack of data it is interesting to do another R-package for rna-seq analysis. We will use EdgeR 
@@ -1966,7 +1952,6 @@ sorted.csv.dge.me.rep <- all_true[order(all_true$FC1),][,c(6,7,8)]
 
 
 
-========================================================================================================================================================================
 #~ ##4 deseq oncogene meta-analysis
 
 
@@ -2345,7 +2330,6 @@ write.csv(row.names=T,sorted.csv.dge.me.onc, file="/home/ghost/Desktop/stage/scr
 
 
 
-=================================================================================================================================================
 ## 5 EdgeR meta-analysis replicative 
 
 
@@ -2589,7 +2573,6 @@ sorted.csv.dge.me.rep <- all_true[order(all_true$FC1),][,c(6,7,8)]
 
 #~ 
 #~ 
-=================================================================================================================================================
 ## EdgeR meta-analysis oncogene 
 #~ 
 
@@ -3010,126 +2993,11 @@ nrow(dge_meta_oncogene.unique)
 
 ```
 
-## get the genes for dds
 
+##Vulcanoplots using multiplot 
 
-```{r getddshfclfc, cache=TRUE}
-
-plot(dds_M_replicative.unique$log2FoldChange)
-percentage.trashold <- 3
-values.use <- floor((length(dds_M_replicative.unique$log2FoldChange)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dds_M_replicative.unique$log2FoldChange)-values.use,col="red")
-dds_M_replicative.unique.highFC <- head(dds_M_replicative.unique,n = values.use)
-dds_M_replicative.unique.lowFC <- tail(dds_M_replicative.unique,n = values.use)
-
-
-plot(dds_M_oncogene.unique$log2FoldChange)
-percentage.trashold <- 5
-values.use <- floor((length(dds_M_oncogene.unique$log2FoldChange)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dds_M_oncogene.unique$log2FoldChange)-values.use,col="red")
-dds_M_oncogene.unique.highFC <- head(dds_M_oncogene.unique,n = values.use)
-dds_M_oncogene.unique.lowFC <- tail(dds_M_oncogene.unique,n = values.use)
-
-plot(dds_M_radiation.unique$log2FoldChange)
-percentage.trashold <- 8
-values.use <- floor((length(dds_M_radiation.unique$log2FoldChange)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dds_M_radiation.unique$log2FoldChange)-values.use,col="red")
-dds_M_radiation.unique.highFC <- head(dds_M_radiation.unique,n = values.use)
-dds_M_radiation.unique.lowFC <- tail(dds_M_radiation.unique,n = values.use)
-
-```
-#~ 
-#~ ## get the genes for dge
-#~ 
-
-```{r getdgehfclfc, cache=TRUE}
-
-plot(dge_M_replicative.unique$logFC)
-percentage.trashold <- 3
-values.use <- floor((length(dge_M_replicative.unique$logFC)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dge_M_replicative.unique$logFC)-values.use,col="red")
-dge_M_replicative.unique.highFC <- head(dge_M_replicative.unique,n = values.use)
-dge_M_replicative.unique.lowFC <- tail(dge_M_replicative.unique,n = values.use)
-
-plot(dge_M_oncogene.unique$logFC)
-percentage.trashold <- 3
-values.use <- floor((length(dge_M_oncogene.unique$logFC)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dge_M_oncogene.unique$logFC)-values.use,col="red")
-dge_M_oncogene.unique.highFC <- head(dge_M_oncogene.unique,n = values.use)
-dge_M_oncogene.unique.lowFC <- tail(dge_M_oncogene.unique,n = values.use)
-
-plot(dge_M_radiation.unique$logFC)
-percentage.trashold <- 8
-values.use <- floor((length(dge_M_radiation.unique$logFC)/100)*percentage.trashold)
-abline(v = values.use,col="red")
-abline(v = length(dge_M_radiation.unique$logFC)-values.use,col="red")
-dge_M_radiation.unique.highFC <- head(dge_M_radiation.unique,n = values.use)
-dge_M_radiation.unique.lowFC <- tail(dge_M_radiation.unique,n = values.use)
-
-
-
-
-```
-
-##Vulcanoplots
-
-
-
-```{r heatmapResults, cache=TRUE, out.width = "900px"}
-
-
-VulcanoRNASEQPlotterDds <- function(x,xlim=c(-8,8)){
-
-res <- x
-# Make a basic volcano plot
-with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot\nDE genes DESeq", xlim=c(xlim)))
-# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
-with(subset(res, padj<.01 ), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
-with(subset(res, abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="orange"))
-with(subset(res, padj<.01 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="green"))
-# Label points with the textxy function from the calibrate plot
-library(calibrate)
-with(subset(res, padj<.01 & abs(log2FoldChange)>1), textxy(log2FoldChange, -log10(pvalue), labs=GeneName, cex=.8))
-
-
-}
-
-
-VulcanoRNASEQPlotterDge <- function(x,xlim=c(-8,8)){
-
-res <- x
-
-with(res, plot(logFC, -log10(PValue), pch=20, main="Volcano plot\nDE genes EdgeR", xlim=c(xlim)))
-# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
-with(subset(res, FDR<.01 ), points(logFC, -log10(PValue), pch=20, col="red"))
-with(subset(res, abs(logFC)>1), points(logFC, -log10(PValue), pch=20, col="orange"))
-with(subset(res, FDR<.01 & abs(logFC)>1), points(logFC, -log10(PValue), pch=20, col="green"))
-# Label points with the textxy function from the calibrate plot
-library(calibrate)
-with(subset(res, FDR<.01 & abs(logFC)>1), textxy(logFC, -log10(PValue), labs=GeneName, cex=.8))
-}
-
-
-```
 
 ```{r Volcano2 , cache=TRUE, out.width = "900px", out.height = "900px"}
-
-
-
-
-
-library(ggplot2)
-library(gridExtra)
-
-# Load packages
-library(dplyr)
-library(ggplot2)
-
 
 
 
@@ -3243,6 +3111,13 @@ nrow=2),
 mylegend, nrow=2,heights=c(5, 1)) 
 
 
+
+
+## heatmap for the end genes.
+# this part can be very nice , since pathway analysis in combination 
+#with this heatmap gives insight into the function of the different 
+#types of senescence. However that is no the goal of this experiment.
+# herefore this is also obsolite 
 #~ grid.arrange(p,p,p,p,p, top = "Title",
             #~ layout_matrix = matrix(c(1,2,3,4,5,5), ncol=2, byrow=TRUE))
 
@@ -3298,31 +3173,28 @@ mylegend, nrow=2,heights=c(5, 1))
 
 
 
+## write the potential markers to csv files 
 
-
-
-write.csv(row.names=T,head(dds_M_replicative.unique[which(abs(dds_M_replicative.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-rep-M.csv")
-write.csv(row.names=T,head(dds_M_oncogene.unique[which(abs(dds_M_oncogene.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-onc-M.csv")
-write.csv(row.names=T,head(dds_M_radiation.unique[which(abs(dds_M_radiation.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-ir-M.csv")
-
-write.csv(row.names=T,head(dge_M_replicative.unique[which(abs(dge_M_replicative.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-rep-M.csv")
-write.csv(row.names=T,head(dge_M_oncogene.unique[which(abs(dge_M_oncogene.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-onc-M.csv")
-write.csv(row.names=T,head(dge_M_radiation.unique[which(abs(dge_M_radiation.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-ir-M.csv")
+```{r finalResultsCsv, cache=TRUE}
+#~ write.csv(row.names=T,head(dds_M_replicative.unique[which(abs(dds_M_replicative.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-rep-M.csv")
+#~ write.csv(row.names=T,head(dds_M_oncogene.unique[which(abs(dds_M_oncogene.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-onc-M.csv")
+#~ write.csv(row.names=T,head(dds_M_radiation.unique[which(abs(dds_M_radiation.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-ir-M.csv")
+#~ 
+#~ write.csv(row.names=T,head(dge_M_replicative.unique[which(abs(dge_M_replicative.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-rep-M.csv")
+#~ write.csv(row.names=T,head(dge_M_oncogene.unique[which(abs(dge_M_oncogene.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-onc-M.csv")
+#~ write.csv(row.names=T,head(dge_M_radiation.unique[which(abs(dge_M_radiation.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-ir-M.csv")
 
 
 #meta 
 
-write.csv(row.names=T,head(dds_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_replicative.csv")
-write.csv(row.names=T,head(dds_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_oncogene.csv")
-write.csv(row.names=T,head(dge_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_replicative.csv")
-write.csv(row.names=T,head(dge_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_oncogene.csv")
+#~ write.csv(row.names=T,head(dds_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_replicative.csv")
+#~ write.csv(row.names=T,head(dds_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_oncogene.csv")
+#~ write.csv(row.names=T,head(dge_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_replicative.csv")
+#~ write.csv(row.names=T,head(dge_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_oncogene.csv")
+#~ 
 
 
-
-
-
-head(dge_M_replicative.unique[which(abs(dge_M_replicative.unique$padj) < 1e-12),])
-
+```
 
 
 
