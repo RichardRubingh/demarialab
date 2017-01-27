@@ -1,0 +1,3328 @@
+---
+title: Finding differentially expressed genes for different types of senescence with
+  DESeq2
+author: "Richard Rubingh"
+date: "November 24, 2016"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+
+## loading R-packages
+
+
+First we need to include the R-packages used in the experiment. 
+
+
+```{r libraries, results='hide', message=FALSE, warning=FALSE,cache=TRUE}
+#source("http://bioconductor.org/biocLite.R")
+
+
+#biocLite("genefilter")
+#biocLite("geneplotter")
+#biocLite("DESeq2")
+#biocLite("BiocGenerics")
+#biocLite("edgeR")
+#biocLite("metaRNASeq")
+#biocLite("pheatmap")
+#biocLite("VennDiagram")
+#biocLite("HTSFilter")
+library("ggplot2")
+library("DESeq2")
+library("BiocGenerics")
+library("edgeR")
+library("metaRNASeq")
+library("genefilter")
+library("pheatmap")
+library("VennDiagram")
+library("HTSFilter")
+```
+
+## Loading the data-sets
+
+
+We will load the data. The data can later be merged into the types 
+of senescence. 
+
+```{r results='hide', message=FALSE, warning=FALSE,cache=TRUE}
+data.abdelmohsen <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/experiment_Abelmohsen/Abdelmohsen .csv",
+    header = T,
+    row.names = 1
+  )
+data.alspach <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Alspach .csv",
+    header = T,
+    row.names = 1
+  )
+data.capell <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Capell .csv",
+    header = T,
+    row.names = 1
+  )
+data.duarte <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Duarte .csv",
+    header = T,
+    row.names = 1
+  )
+data.herranz <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Herranz .csv",
+    header = T,
+    row.names = 1
+  )
+data.marthandan <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Marthandan .csv",
+    header = T,
+    row.names = 1
+   )
+data.dilovskaya <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Dilovskaya  .csv",
+    header = T,
+    row.names = 1
+  )
+ data.marthandanRot <-
+   read.csv(
+ "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Marthandan_ROT .csv",
+ header = T,
+ row.names = 1
+   )
+data.rai <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/not-normalized/Rai .csv",
+    header = T ,
+    row.names = 1
+  )
+data.demaria <-
+  read.csv(
+    "/home/ghost/Desktop/stage/data/datasets-demarialab/normalized/Demaria.csv",
+    header = T ,
+    row.names = 1
+  )
+
+
+
+```
+
+We then look for the datasets and groups. We know there are three types 
+of senescence. Replicative(REP), Oncogene-induced(OIS) 
+and ionizing radiation (IR). 
+
+
+##Replicative datasets :
+"data.marthandan"  
+"data.rai"  
+"data.abdelmohsen"  
+"data.alspach"  
+
+##Oncogene-induced datasets:
+"data.capell"  
+"data.duarte"  
+"data.herranz"  
+"data.dilovskaya"  
+
+##Radiation dataset :
+"data.demaria"  
+
+
+## Check if the same genes are shared in the data-sets
+Now we check if the genes in the ionizing radiation dataset 
+are also present in the others. This is  
+because the rownames ( which are the genes ) 
+are different in the radiation dataset. So it is possible that the 
+differences are very great.
+
+Note:
+	The data-sets contain the same genes except the ir data-set.
+	We can check the genes by just picking one of the others.
+
+```{r testGenesInData, cache=TRUE}
+
+length(Reduce(intersect, list(rownames(data.demaria), rownames(data.capell))))
+
+```
+
+There are many genes that are shared between the IR data-set and the 
+others. So we can use this data-set. 
+
+
+## Defining functions
+We use several functions or and wrappers that are custom to simplify 
+coding. 
+
+
+```{r, cache=TRUE}
+
+DataFrameMerger <- function(x, y) {
+  # Merge two data-frames together, and preserve row names.
+  #
+  # Args:
+  #   x: The first data-frame where the second will be merged to.
+  #   y: The second data-frame that will be merged to the first one.
+  #
+  # Returns:
+  #   Data-frame that is the result of merging the second data-frame
+  #   on the first data-frame.
+  
+  # Error handling
+  if (class(x)  != "data.frame" || class(y)  != "data.frame") {
+    stop(
+      "One or both arguments are not data-frames.\n",
+      "This function is intended to be used for merging data-frames."
+    )
+  }
+  
+  merged <- merge(x, y ,  by = 0, all = TRUE)
+  rownames(merged) <- merged[, 1]
+  rownames(merged) <- merged$Row.names
+  merged.data.frames <- merged[, c(2:ncol(merged))]
+  return(merged.data.frames)
+}
+
+
+
+
+
+# Is needed to be used in ProteinCodingGenesExtractor, can be updated
+# as wished.
+protein.coding.genes <-
+  read.csv(
+    "/home/ghost/Desktop/stage/parserpython/GRCh38_unique_genes",    
+    header = T,
+    as.is = T
+  )
+
+
+ProteinCodingGenesExtractor <- function(x) {
+  # Extract only protein coding genes from a data-set.
+  #
+  # Args:
+  #   x: DESeqDataSet
+  #
+  # Returns:
+  # DESeqDataSet containing only protein coding genes
+  # protein.coding.genes can be changed manually or and updated 
+  
+  
+  # Error handling
+  if (class(x)  != "DESeqDataSet" ) {
+    stop(
+      "One argument is not a DESeqDataSet"
+    )
+  }
+found.as.protein.na <- match(protein.coding.genes$proteinCodingGenes, 
+rownames(assay(x)))
+found.as.protein <- found.as.protein.na[!is.na(found.as.protein.na)]
+
+return(x[found.as.protein, ])
+}
+
+
+
+
+
+
+
+
+
+PlotPCADESeq <- function(rld,colorPCA,shapePCA,intCol,intShape,xMin,xMax,yMin,yMax,titleName="PCA plot\n",colorName="Cell strain/tissue\n",shapeName="\nCell condition") {
+  # Extract only protein coding genes from a data-set.
+  #
+  # Args:
+  #   x: DESeqDataSet
+  #
+  # Returns:
+  # DESeqDataSet containing only protein coding genes
+  # protein.coding.genes can be changed manually or and updated 
+  
+  
+  # Error handling
+  #~ if (class(x)  != "DESeqDataSet" ) {
+    #~ stop(
+      #~ "One argument is not a DESeqDataSet"
+    #~ )
+  #~ }
+
+
+
+
+
+data <-
+plotPCA(
+rld,
+intgroup = c(intCol,intShape ),
+returnData = T
+)
+data
+percentVar <- round(100 * attr(data, "percentVar"))
+PCAplot <- ggplot(
+data,
+aes(
+PC1,
+PC2,
+color = colorPCA,
+shape = shapePCA,
+label = colnames(rld)
+)
+) +
+geom_point(size = 3) +  geom_text(hjust = -0.1,
+nudge_x = 0.05,
+cex = 3) +
+xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+ylab(paste0("PC2: ", percentVar[2], "% variance")) + ggtitle(titleName) +
+theme(text = element_text(size = 14, family = "Comic Sans MS")) +
+coord_fixed() + labs(shape = shapeName, color = colorName)  +  scale_x_continuous(limits = c(xMin, xMax)) +
+scale_y_continuous(limits = c(yMin, yMax))
+
+return(PCAplot)
+}
+
+
+
+
+
+
+
+
+
+DdsHTSfilter <- function(x,contrastValues) {
+  # Extract only protein coding genes from a data-set.
+  #
+  # Args:
+  #   x: DESeqDataSet
+  #
+  # Returns:
+  # DESeqDataSet containing only protein coding genes
+  # protein.coding.genes can be changed manually or and updated 
+  
+  
+  # Error handling
+  if (class(x)  != "DESeqDataSet" ) {
+    stop(
+      "One argument is not a DESeqDataSet"
+    )
+  }
+
+
+filter <- HTSFilter(x, plot=FALSE)$filteredData
+res <- results(filter, independentFiltering=FALSE,
+contrast = c(contrastValues[1],contrastValues[2],contrastValues[3]), 
+alpha = .01)
+return(res)
+}
+
+
+
+
+
+
+
+EdgeRTopTags <- function(x,modelDesign,coefString) {
+  # Extract only protein coding genes from a data-set.
+  #
+  # Args:
+  #   x: DESeqDataSet
+  #
+  # Returns:
+  # DESeqDataSet containing only protein coding genes
+  # protein.coding.genes can be changed manually or and updated 
+  
+  
+  # Error handling
+  if (class(x)  != "DESeqDataSet" ) {
+    stop(
+      "One argument is not a DESeqDataSet"
+    )
+  }
+
+ d <- DGEList(counts = as.matrix(assay(x)) ) 
+ #~ #normalization must be done before GLM analysis.
+ design <- modelDesign
+ dge <- calcNormFactors(d)
+ dge <- estimateGLMCommonDisp(dge, design) 
+ dge <- estimateGLMTagwiseDisp(dge, design) 
+ glmfit.dge <- glmFit(dge, design,dispersion=dge$common.dispersion) 
+ lrt.dge <- glmLRT(glmfit.dge, coef=coefString) 
+ edgerRes <- topTags(lrt.dge,n=nrow(lrt.dge), adjust.method="BH", sort.by="logFC", p.value=0.01) 
+return(edgerRes)
+
+
+
+}
+
+
+EdgeRTopTagsSingleDesign <- function(x,pairVec,cond) {
+  # Extract only protein coding genes from a data-set.
+  #
+  # Args:
+  #   x: DESeqDataSet
+  #
+  # Returns:
+  # DESeqDataSet containing only protein coding genes
+  # protein.coding.genes can be changed manually or and updated 
+  
+  
+  # Error handling
+  if (class(x)  != "DESeqDataSet" ) {
+    stop(
+      "One argument is not a DESeqDataSet"
+    )
+  }
+  
+DGEListDe <- DGEList(counts=assay(x), 
+                  group=factor(cond))
+DGEListDe$samples$lib.size <- colSums(DGEListDe$counts)
+d <- DGEListDe
+d2<-calcNormFactors(d)
+d3<-estimateCommonDisp(d2)
+tagDis<-estimateTagwiseDisp(d3)
+de<-exactTest(tagDis,pair=pairVec)
+de01 <- de$table[which(de$table$PValue <= 0.01 ),]
+
+
+return(list(DE=de,TAG=tagDis))
+
+
+}
+
+
+
+
+
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  require(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+## Merging datasets
+Now we can merge the data-sets into the three senescence type groups. 
+This will result in three datasets, each 
+representing one type of senescence. 
+
+We start with replicative senescence:
+
+```{r, cache=TRUE}
+result <- DataFrameMerger(data.marthandan, data.rai)
+result <- DataFrameMerger(result, data.abdelmohsen)
+result <- DataFrameMerger(result, data.alspach)
+result <- DataFrameMerger(result, data.marthandanRot)
+replictiveSen <- result
+```
+
+Then we merge the oncogene datasets
+```{r, cache=TRUE}
+# Merging non-normalized data
+result <- DataFrameMerger(data.capell, data.duarte)
+result <- DataFrameMerger(result, data.herranz)
+result <- DataFrameMerger(result, data.dilovskaya)
+oncoGeneSen <- result
+```
+
+And finally the radiation dataset 
+( there is no merging here, but rather redefining for convenience)
+
+```{r, cache=TRUE}
+irSen <- data.demaria
+```
+
+
+## Defining conditions 
+
+It is necessary to provide a design formula. This increases 
+the sensitivity specifically for the 
+condition we are looking for ( in this case types of senescence ). 
+
+
+First we load the description of the experiments. 
+
+
+```{r, cache=TRUE}
+dataInfo <- read.csv("/home/ghost/Desktop/stage/data/Sample description ALL experiments.csv")
+```
+
+Then we get design information for the marthandan dataset. We will 
+be adding the condition, cell strain/type and the study to the design.
+Note:
+	Not all three conditions can be added in some cases. Because for 
+	example all the elements in study are the same. Then adding this 
+	does not make sence. In other senarios it does make sence and we 
+	will add them. 
+	
+We will start by adding the condition to the individual data-sets. We
+can later merge these together for the merged data-sets. 
+
+
+```{r, cache=TRUE}
+data.marthandan.condition <- as.vector(dataInfo$Type.Sen[match(colnames(data.marthandan), dataInfo$File.Name)])
+data.marthandanRot.condition <- as.vector(dataInfo$Type.Sen[match(colnames(data.marthandanRot), dataInfo$File.Name)])
+```
+
+Note:
+This data contains three elements that were lost. But it is known what they are. The values will 
+be set manually : 
+
+```{r, cache=TRUE}
+data.marthandan.condition[is.na(data.marthandan.condition)] <-  "No" 
+```
+
+
+Now we can get the design (condition) information for the other replicative senescence dataset in the same way.
+
+```{r, cache=TRUE}
+data.rai.condition <- as.vector(dataInfo$Type.Sen[match(colnames(data.rai), dataInfo$File.Name)])
+data.abdelmohsen.condition <- as.vector(dataInfo$Type.Sen[match(colnames(data.abdelmohsen), dataInfo$File.Name)])
+data.alspach.condition <- as.vector(dataInfo$Type.Sen[match(colnames(data.alspach), dataInfo$File.Name)])
+```
+
+Now that we have attached all of the condition information we can merge them together. This will 
+later be used to attach all of the design information into the same object together with the 
+replicative dataset. This procedure is similar for the onco-gene and ionizing radiation data-sets. 
+
+
+```{r, cache=TRUE}
+replictiveSen.condition <-
+  c(data.marthandan.condition ,
+        data.rai.condition,
+    data.abdelmohsen.condition,
+    data.alspach.condition,
+    data.marthandanRot.condition)
+```
+
+
+The data in from the description information shows different OIS names/types. 
+They should be treated in the same way. This is why the conditions for 
+the onco-gene dataset will be provided manually. 
+
+
+```{r, cache=TRUE}
+
+data.capell.condition   <- rep(c("OIS", "No"))
+data.duarte.condition <- rep(c("No", "OIS"))
+data.herranz.condition <- rep(c("No", "OIS"), 3)
+data.dilovskaya.condition <-
+rep(c("No", "No", "No", "OIS", "OIS", "OIS"))
+```
+
+
+We can now create the condition data for the oncogene-induced dataset. 
+
+
+```{r, cache=TRUE}
+oncoGeneSen.condition <-
+  c(
+    data.capell.condition,
+    data.duarte.condition,
+    data.herranz.condition,
+    data.dilovskaya.condition
+  )
+```
+
+
+And for the ionizing radiation data. 
+
+
+```{r, cache=TRUE}
+irSen.condition <-
+  rep(c(
+    "No",
+    "No",
+    "No",
+    "No",
+    "No",
+    "No",
+    "ir",
+    "ir",
+    "ir",
+    "ir",
+    "ir",
+    "ir"
+  ))
+```
+
+
+## Cell strain/type
+
+We will  now create the elements needed for the design in regards to 
+the cell strain/type. 
+
+```{r, cache=TRUE}
+data.marthandan.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.marthandan), dataInfo$File.Name)])
+data.marthandanRot.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.marthandanRot), dataInfo$File.Name)])
+```
+
+Note:   
+	Some data for the marthandan dataset is missing. 
+	It is known what they are. They are added manually. 
+
+```{r, cache=TRUE}
+
+data.marthandan.cellStrain[is.na(data.marthandan.cellStrain)] <-  "MRC-5 fibroblasts" 
+```
+
+
+Another problem with the data is that there was an mistake in the 
+cell name provided for the herranz data-set. Some characters 
+were switched. So we have to manually add these. 
+
+
+```{r, cache=TRUE}
+data.herranz.cellStrain <- rep("IMR90 lung fibroblast", 6)
+```
+
+The other datasets can be added in the same way. 
+
+```{r, cache=TRUE}
+data.rai.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.rai), dataInfo$File.Name)])
+data.abdelmohsen.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.abdelmohsen), dataInfo$File.Name)])
+data.alspach.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.alspach), dataInfo$File.Name)])
+data.capell.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.capell), dataInfo$File.Name)])
+data.duarte.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.duarte), dataInfo$File.Name)])
+data.dilovskaya.cellStrain <-
+  as.vector(dataInfo$Cell.type[match(colnames(data.dilovskaya), dataInfo$File.Name)])
+```
+
+
+
+We can now create objects for the types of senescence containing the
+information for the cell strain/type. There is no need to do the 
+same for the ionizing radiation dataset. This is because they are 
+all the same cell type/strain. 
+
+
+```{r, cache=TRUE}
+replictiveSen.cellStrain <-
+  c(
+    data.marthandan.cellStrain ,
+    data.rai.cellStrain,
+    data.abdelmohsen.cellStrain,
+    data.alspach.cellStrain,
+    data.marthandanRot.cellStrain
+  )
+
+oncoGeneSen.cellStrain <-
+  c(
+    data.capell.cellStrain,
+    data.duarte.cellStrain,
+    data.herranz.cellStrain,
+    data.dilovskaya.cellStrain
+  )
+```
+
+
+
+
+
+
+
+
+## Study 
+
+The study is also included. This is important because some researchers 
+used different methods and or conditions to generate their data. 
+This can influence the data and we have to keep in mind that they are 
+different. Also comparisons can be made based on study. So it is 
+important to be able to add this to the design. 
+
+
+```{r, cache=TRUE}
+data.marthandan.study <-
+  as.vector(dataInfo$Study[match(colnames(data.marthandan), dataInfo$File.Name)])
+data.marthandanRot.study <-
+  as.vector(dataInfo$Study[match(colnames(data.marthandanRot), dataInfo$File.Name)])
+```
+Note:
+Some data for the marthandan dataset is missing. This will be added manually, since we know what it is. 
+
+```{r, cache=TRUE}
+data.marthandan.study[is.na(data.marthandan.study)] <-
+  "Marthandan" 
+```
+
+The information of the other datasets can be assigned in the same way . 
+
+```{r, cache=TRUE}
+data.rai.study <-
+  as.vector(dataInfo$Study[match(colnames(data.rai), dataInfo$File.Name)])
+data.abdelmohsen.study <-
+  as.vector(dataInfo$Study[match(colnames(data.abdelmohsen), dataInfo$File.Name)])
+data.alspach.study <-
+  as.vector(dataInfo$Study[match(colnames(data.alspach), dataInfo$File.Name)])
+data.capell.study <-
+  as.vector(dataInfo$Study[match(colnames(data.capell), dataInfo$File.Name)])
+data.duarte.study <-
+  as.vector(dataInfo$Study[match(colnames(data.duarte), dataInfo$File.Name)])
+data.herranz.study <-
+  as.vector(dataInfo$Study[match(colnames(data.herranz), dataInfo$File.Name)])
+data.dilovskaya.study <-
+  as.vector(dataInfo$Study[match(colnames(data.dilovskaya), dataInfo$File.Name)])
+```
+
+We can now create objects for the types of senescence containing 
+the information for study.There is no need to do the same for 
+the ionizing radiation dataset. This is because this is one study. 
+
+```{r, cache=TRUE}
+replictiveSen.study <-
+  c(data.marthandan.study ,
+    data.rai.study,
+    data.abdelmohsen.study,
+    data.alspach.study,
+    data.marthandanRot.study)
+
+oncoGeneSen.study <-
+  c(data.capell.study,
+    data.duarte.study,
+    data.herranz.study,
+    data.dilovskaya.study)
+```
+
+
+
+## Convert to matrix
+
+The DESeq object consists of multiple parts. One part is the read 
+count data. We obtains this data from the datasets by 
+converting the data a matrix.
+
+Data from marthandan is also used seperatley. This is to show that 
+there are some problems with this data-set. There were no problems 
+with the other data-sets. So to ceep things consice :
+
+```{r, cache=TRUE}
+data.marthandan.countdata <- as.matrix(data.marthandan)
+replictiveSen.countdata <- as.matrix(replictiveSen)
+oncoGeneSen.countdata <- as.matrix(oncoGeneSen)
+irSen.countdata <- as.matrix(irSen)
+```
+
+Lets check if we have defined all columns in the condition , 
+cell strain/tussue and study.
+
+```{r, cache=TRUE}
+ncol(replictiveSen.countdata)
+length(replictiveSen.cellStrain)
+length(replictiveSen.condition)
+length(replictiveSen.study)
+```
+
+They are all equal so lets move on. 
+
+## Coldata
+
+Another building block for the DESeq object is the column data. 
+We include information for the study , cell strain/type and condition. 
+Except for the ionizing radiation dataset. There this is not needed. 
+
+
+
+```{r, cache=TRUE}
+data.marthandan.coldata         <-
+  data.frame(row.names = colnames(data.marthandan.countdata), data.marthandan.condition)
+data.marthandan.coldata <-
+  cbind(data.marthandan.coldata,
+        data.frame(
+          row.names = colnames(data.marthandan.countdata),
+          data.marthandan.cellStrain
+        ))
+
+
+replictiveSen.coldata <-
+  data.frame(row.names = colnames(replictiveSen.countdata), replictiveSen.condition)
+replictiveSen.coldata <-
+  cbind(replictiveSen.coldata,
+        data.frame(
+          row.names = colnames(replictiveSen.countdata),
+          replictiveSen.cellStrain
+        ))
+replictiveSen.coldata <-
+  cbind(replictiveSen.coldata,
+        data.frame(row.names = colnames(replictiveSen.countdata),
+                   replictiveSen.study))
+
+oncoGeneSen.coldata  <-
+  data.frame(row.names = colnames(oncoGeneSen.countdata), oncoGeneSen.condition)
+oncoGeneSen.coldata  <-
+  cbind(oncoGeneSen.coldata,
+        data.frame(row.names = colnames(oncoGeneSen.countdata), oncoGeneSen.cellStrain))
+oncoGeneSen.coldata  <-
+  cbind(oncoGeneSen.coldata,
+        data.frame(row.names = colnames(oncoGeneSen.countdata), oncoGeneSen.study))
+
+
+irSen.coldata         <-
+  data.frame(row.names = colnames(irSen.countdata), irSen.condition)
+```
+
+## Create DESeq objects
+
+Now we have all of the building blocks to create a DESeq object. 
+We have the count data, the column data and information about the 
+columns condition of senescence, study and cell strain/study. 
+
+We create the DESeq objects like this : 
+
+
+```{r , cache=TRUE}
+data.marthandan.dds <-
+  DESeqDataSetFromMatrix(
+    countData = data.marthandan.countdata,
+    colData = data.marthandan.coldata,
+    design =  ~ data.marthandan.condition  + data.marthandan.cellStrain
+  )
+
+
+replictiveSen.dds <-
+  DESeqDataSetFromMatrix(
+    countData = replictiveSen.countdata,
+    colData = replictiveSen.coldata,
+    design =  ~ replictiveSen.condition  + replictiveSen.cellStrain
+  )
+ 
+
+# The design for the cellstrain is not included, since they are all the same.
+oncoGeneSen.dds <-
+  DESeqDataSetFromMatrix(
+    countData = oncoGeneSen.countdata,
+    colData = oncoGeneSen.coldata,
+    design =  ~ oncoGeneSen.condition + oncoGeneSen.study
+  )
+
+# Design only needs the cell condition
+irSen.dds <-
+  DESeqDataSetFromMatrix(
+    countData = irSen.countdata,
+    colData = irSen.coldata,
+    design =  ~ irSen.condition
+  )
+
+```
+
+
+After we created the dds elements we want to do rlog transformation 
+on these. This will only be used to plot the PCA plots. The PCA plots 
+can give insight into if the data can possibly find differential 
+expressed genes for senescence.
+
+```{r rldCalculation, cache=TRUE}
+replictiveSen.rld <- rlogTransformation(replictiveSen.dds)
+marthandan.rld <- rlogTransformation(data.marthandan.dds)
+oncoGeneSen.rld <- rlogTransformation(oncoGeneSen.dds)
+irSen.rld <- rlogTransformation(irSen.dds)
+```
+
+Now we can create a PCA plot to see if the clustering can be done for senescence. 
+Note:
+	We show this for the marthandan data. The others seem to be fine.
+
+
+
+```{r pca1,results='hide', message=FALSE, warning=FALSE, cache=TRUE,out.width = "1000px",out.height = "1200px"}
+PlotPCADESeq(marthandan.rld,data.marthandan.condition,data.marthandan.cellStrain,"data.marthandan.condition","data.marthandan.cellStrain",
+-50,90,-35,35,"PCA Biplot replicative senescence(marthandan)\n\n\n")
+
+
+```
+
+
+We can see now that there is one element in the PCA plot of the 
+marthandan dataset that clearly does not cluster well.
+We can now zoom into this region to observed this issue in more detail. 
+
+
+```{r pca3, results='hide', message=FALSE, warning=FALSE,cache=TRUE,out.width = "1000px",out.height = "1000px"}
+PlotPCADESeq(marthandan.rld,data.marthandan.condition,data.marthandan.cellStrain,"data.marthandan.condition","data.marthandan.cellStrain",
+-33, -20,-12, -5,"PCA Biplot replicative senescence(zoomed)\n\n")
+
+
+```
+
+We will remove the "SRR1660552" from the data. We have to make sure 
+to remove all the the elements involved to also remove this column.
+
+
+We first check the current size of the columns to later check if 
+the removal was complete. Or if there might be some unsertainty about 
+this situation. 
+
+```{r, cache=TRUE}
+ncol(data.marthandan)
+length(data.marthandan.cellStrain)
+length(data.marthandan.condition)
+length(data.marthandan.study)
+ncol(data.marthandan.dds)
+
+```
+
+
+Now we remove "SRR1660552"
+```{r ddsRemoval, cache=TRUE}
+data.marthandan <- data.marthandan[c(1:21,23:30)]
+data.marthandan.cellStrain <- data.marthandan.cellStrain[c(1:21,23:30)]
+data.marthandan.condition <- data.marthandan.condition[c(1:21,23:30)]
+data.marthandan.study <- data.marthandan.study[c(1:21,23:30)]
+data.marthandan.dds <- data.marthandan.dds[,c(1:21,23:30)]
+```
+
+And check if the data is truly one column less
+
+```{r, cache=TRUE}
+ncol(data.marthandan)
+length(data.marthandan.cellStrain)
+length(data.marthandan.condition)
+length(data.marthandan.study)
+ncol(data.marthandan.dds)
+
+```
+
+
+
+
+
+
+We can now re-calculate the rlog transformation  for 
+the marthandan data-set. Then we can perform the PCA for 
+the second time with the removed data. 
+
+
+
+```{r marthandanNewRld, cache=TRUE}
+ncol(data.marthandan.dds) # Check the different size 
+marthandan.rld <- rlogTransformation(data.marthandan.dds)
+```
+
+Check if now the data does cluster good. 
+
+
+```{r pca4,results='hide', message=FALSE, warning=FALSE, cache=TRUE,out.width = "1000px",out.height = "1000px"}
+PlotPCADESeq(marthandan.rld,data.marthandan.condition,data.marthandan.cellStrain,"data.marthandan.condition","data.marthandan.cellStrain",
+-50,90,-35,35,"PCA Biplot replicative senescence\n(SRR1660552 removed)\n\n")
+```
+
+
+Clusters well. We will now plot the dataset as a whole for the replicative
+data. We first have to remove the "SRR1660552" column also from this 
+data. This is easier than rebuilding the entire dataset.
+
+```{r remove552, cache=TRUE}
+replictiveSen.dds.backup <- replictiveSen.dds
+removeIndice <- as.numeric(grep("SRR1660552", colnames(replictiveSen.dds))) 
+
+replictiveSen.dds <- replictiveSen.dds[,c(1:(removeIndice-1), (removeIndice+1):46)]
+replictiveSen.cellStrain <- replictiveSen.cellStrain[c(1:(removeIndice-1), (removeIndice+1):46)]
+replictiveSen.condition <- replictiveSen.condition[c(1:(removeIndice-1), (removeIndice+1):46)]
+replictiveSen.study <- replictiveSen.study[c(1:(removeIndice-1), (removeIndice+1):46)]
+dim(replictiveSen.dds)
+```
+We now have to re-calculate the rld for replicative dataset. 
+
+```{r reGenerateRepRld, cache=TRUE}
+dim(replictiveSen.dds)
+replictiveSen.rld <- rlogTransformation(replictiveSen.dds)
+dim(replictiveSen.rld)
+```
+
+
+Now everything seem to cluster fine on senescence. This prodecure was also done for the other datasets. 
+But this was the only dataset where modiications were desired. To keep the information conciece , this
+is not repeated here for the other datasets individually. 
+
+
+We can now start plotting the replicative dataset as a whole. 
+
+
+```{r replicative_pca,cache=TRUE}
+
+PlotPCADESeq(replictiveSen.rld,replictiveSen.condition,replictiveSen.study,"replictiveSen.study","replictiveSen.condition",
+-100,100,-100,100,"PCA Biplot replicative senescence\n","Cell condition","Study")
+
+```
+
+
+We can now conclude that there is a strong relationship between the clustering and the study( methods used ). 
+
+
+We are looking some certainty that the clustering can be done on senescence. Because we cant to do the differential 
+expression analysis, we have to make sure this makes sense. It is possible that the senescence we are looking for 
+can be seen in a different principal component. So we can plot different principal components to see if they 
+make a difference specific for senescence. 
+
+
+
+
+
+```{r pca13, cache=TRUE, out.width="900px"}
+
+#prepare pca data
+rv = rowVars(assay(replictiveSen.rld))
+select = order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+pca_data = prcomp(t(assay(replictiveSen.rld)[select, ]))
+
+#select which principal components to use( in this case we go till 5 )
+scores <- data.frame(replictiveSen.study, pca_data$x[,1:5])
+
+# Select only unique pca elements 
+pcaCombinations <- t(combn(c("PC1","PC2","PC3","PC4"),2))
+
+
+
+for (i in c(1:nrow(pcaCombinations))){
+pc1 <- as.character(pcaCombinations[i,1])
+pc2 <- as.character(pcaCombinations[i,2])
+print(qplot(x=eval(parse(text = pc1)), y=eval(parse(text = pc2)), 
+data=scores, shape=replictiveSen.study , 
+color=replictiveSen.condition,label = colnames(replictiveSen.rld)) + 
+geom_point(size = 3) + 
+xlab(paste( pc1,"Percentage variance : ",
+round(summary(pca_data)$importance[,pc1][2] * 100, digits = 2))) + 
+ylab(paste( pc2,"Percentage variance : ",
+round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
+) 
+}
+
+
+
+
+```
+
+Create the pca plots in a single image( more compact ). 
+
+```{r pca131, cache=TRUE, out.width="1000px"}
+
+
+
+plots = lapply(c(1:nrow(pcaCombinations)), function(.x) 
+
+qplot(scores[,pcaCombinations[.x,1]],scores[,pcaCombinations[.x,2]],main=paste("Combination",.x),
+ shape=replictiveSen.cellStrain,
+color=replictiveSen.condition) + theme(
+axis.text=element_text(size=6),
+        axis.title=element_text(size=10,face="bold"
+        
+        
+        ),legend.position="none",plot.title = element_text(size = 10)) + 
+geom_point(size = 3) + 
+xlab(paste( pc1,"%Var: ",
+round(summary(pca_data)$importance[,pc1][2] * 100, digits = 2))) + 
+ylab(paste( pc2,"%Var: ",
+round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
+
+
+)
+
+
+layout <-  matrix(c(1,2,3,4,5,6,6,6,6,6), 2, 5, byrow = TRUE)
+
+
+
+
+
+
+
+multiplot(plotlist = plots, layout = layout)
+
+
+
+
+
+
+```
+
+
+In the previous plots we can see that the dataset marthandan_ROT does
+not cluster well. It seems to cluster in the wrong way, which make 
+this dataset not use full for our differential expression analysis. 
+
+We will have to remove marthandan_rot from our data. We can then again
+do the prinsipal component analsysis to see if the data will cluster well
+on senescence. 
+
+
+
+
+Note :
+We can now also add the study to the dds design.
+(not possible before because redundacy in model) 
+We check if the replicative senescence dataset is 29 instead of 30 in length due to 
+the removal of one column. 
+
+
+
+
+
+
+```{r, cache=TRUE}
+ncol(replictiveSen.dds)
+```
+
+
+```{r, cache=TRUE}
+replictiveSen.dds.oldBackup <- replictiveSen.dds
+dim(replictiveSen.dds)
+ncol(data.marthandan)
+length(data.marthandan.condition)
+length(data.marthandan.cellStrain)
+length(data.marthandan.study)
+
+result <- DataFrameMerger(data.marthandan, data.rai)
+result <- DataFrameMerger(result, data.abdelmohsen)
+result <- DataFrameMerger(result, data.alspach)
+replictiveSen <- result
+
+replictiveSen.condition <-
+  c(data.marthandan.condition ,
+        data.rai.condition,
+    data.abdelmohsen.condition,
+    data.alspach.condition)
+
+
+replictiveSen.cellStrain <-
+  c(
+    data.marthandan.cellStrain ,
+    data.rai.cellStrain,
+    data.abdelmohsen.cellStrain,
+    data.alspach.cellStrain
+  )
+
+replictiveSen.study <-
+  c(data.marthandan.study ,
+    data.rai.study,
+    data.abdelmohsen.study,
+    data.alspach.study
+    )
+
+replictiveSen.countdata <- as.matrix(replictiveSen)
+
+replictiveSen.coldata <-
+  data.frame(row.names = colnames(replictiveSen.countdata), replictiveSen.condition)
+replictiveSen.coldata <-
+  cbind(replictiveSen.coldata,
+        data.frame(
+          row.names = colnames(replictiveSen.countdata),
+          replictiveSen.cellStrain
+        ))
+replictiveSen.coldata <-
+  cbind(replictiveSen.coldata,
+        data.frame(row.names = colnames(replictiveSen.countdata),
+                   replictiveSen.study))
+
+
+replictiveSen.dds <-
+  DESeqDataSetFromMatrix(
+    countData = replictiveSen.countdata,
+    colData = replictiveSen.coldata,
+    design =  ~ replictiveSen.condition  + replictiveSen.cellStrain + replictiveSen.study
+  )
+  
+  
+
+ncol(replictiveSen)
+length(replictiveSen.cellStrain)
+length(replictiveSen.condition)
+length(replictiveSen.study)
+ncol(replictiveSen.dds)
+
+  
+```
+We also need to recalculate the log values
+
+
+```{r rldRepNew, cache=TRUE}
+replictiveSen.rld <- rlogTransformation(replictiveSen.dds)
+
+```
+
+
+
+We can now plot the different principal components again to see 
+if the clustering on senesecnce is a sucess. 
+
+
+```{r pca13New, cache=TRUE}
+
+#prepare pca data
+rv = rowVars(assay(replictiveSen.rld))
+select = order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+pca_data = prcomp(t(assay(replictiveSen.rld)[select, ]))
+
+#select which principal components to use( in this case we go till 5 )
+scores <- data.frame(replictiveSen.study, pca_data$x[,1:5])
+
+# Select only unique pca elements 
+pcaCombinations <- t(combn(c("PC1","PC2","PC3","PC4"),2))
+
+
+
+for (i in c(1:nrow(pcaCombinations))){
+pc1 <- as.character(pcaCombinations[i,1])
+pc2 <- as.character(pcaCombinations[i,2])
+print(qplot(x=eval(parse(text = pc1)), y=eval(parse(text = pc2)), 
+data=scores, shape=replictiveSen.study , 
+color=replictiveSen.condition,label = colnames(replictiveSen.rld)) + 
+geom_point(size = 3) + 
+xlab(paste( pc1,"Percentage variance : ",
+round(summary(pca_data)$importance[,pc1][2] * 100, digits = 2))) + 
+ylab(paste( pc2,"Percentage variance : ",
+round(summary(pca_data)$importance[,pc2][2] * 100, digits = 2)))
+) 
+}
+
+
+```
+
+In the PCA3 vs PCA4 we can now see a seperation between the senescence.
+This is good this means the data can be distingioused for senesecne.
+
+
+
+
+We have now three datasets that seem to be able to differ in a way that 
+accounts for the types of senescence.
+
+Now lets take a closer look at the data. 
+
+
+```{r, cache=TRUE}
+dim(assay(replictiveSen.dds))
+```
+We can see that there are about 60000 genes in the data-set. The goal 
+is to find differentially expressed genes specifically for membrane 
+proteins. There are bout 20000 genes protein coding. So we have to 
+remove the genes that are non-protein coding. 
+
+
+We use genes from the ensemble so we will also get our protein(peptide) 
+coding genes from their ftp server. 
+
+
+The protein coding genes can be found in the file provided by the link below: 
+
+ftp://ftp.ensembl.org/pub/release-86/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
+
+
+We will remove non protein coding genes form our datasets. First we load the gene information from the ensemble 
+peptide dataset. 
+
+
+We can now start to remove the non protein coding genes from our datasets. 
+
+This will be done using the function ProteinCodingGenesExtractor. 
+First we check the current rows of our three data-sets.
+
+```{r, cache=TRUE}
+nrow(replictiveSen.dds)
+nrow(oncoGeneSen.dds)
+nrow(irSen.dds)
+```
+Now we can remove non-protein coding genes from our datasets.
+
+```{r, cache=TRUE}
+replictiveSen.dds <- ProteinCodingGenesExtractor(replictiveSen.dds)
+oncoGeneSen.dds <- ProteinCodingGenesExtractor(oncoGeneSen.dds)
+irSen.dds <- ProteinCodingGenesExtractor(irSen.dds)
+```
+We can then check if the data-sets are ineed reduced in size. 
+
+```{r, cache=TRUE}
+nrow(replictiveSen.dds)
+nrow(oncoGeneSen.dds)
+nrow(irSen.dds)
+```
+## zero gene count filtering
+Now it is possible that there are genes that were not counted at all. It is possible to remove low counting
+genes. This can speed further calculation up.
+
+
+
+```{r, cache=TRUE}
+replictiveSen.dds <- replictiveSen.dds[rowSums(counts(replictiveSen.dds)) > 0,]
+oncoGeneSen.dds <- oncoGeneSen.dds[rowSums(counts(oncoGeneSen.dds)) > 0,]
+irSen.dds <- irSen.dds[rowSums(counts(irSen.dds)) > 0,]
+```
+
+We can check the final size of the data we will use in the DESeq 
+pipeline. 
+
+```{r, cache=TRUE}
+dim(replictiveSen.dds)
+dim(oncoGeneSen.dds)
+dim(irSen.dds)
+```
+
+
+## Run the DESeq pipeline
+We can now run the deseq pipeline for the datasets.
+
+```{r deseqPipeline, cache=TRUE}
+replictiveSen.dds <- DESeq(replictiveSen.dds)
+oncoGeneSen.dds <- DESeq(oncoGeneSen.dds)
+irSen.dds  <- DESeq(irSen.dds)
+```
+
+
+Now we can start the differential expression analysis. It is very important to
+add the parameters for the selection of the type of senescence. Otherwise the result is
+might not be focusing on the senescence.
+
+The parameter alpha accounts for the cutoff ratio for optimizing the independent filtering.
+This value should be the same as the adjusted p-value cutoff (false discovery rate).
+
+
+
+```{r repOncIrres, cache=TRUE}
+# Get differential expression results
+replictiveSen.dds.res <-
+  results(
+    replictiveSen.dds,
+    contrast = c("replictiveSen.condition", "Replicative", "No"), #switched
+    alpha = .01
+  )
+oncoGeneSen.dds.res <-
+  results(
+    oncoGeneSen.dds,
+    contrast = c("oncoGeneSen.condition", "OIS", "No"),
+    alpha = .01
+  )
+irSen.dds.res <-
+  results(irSen.dds,
+          contrast = c("irSen.condition", "ir", "No"),
+          alpha = .01)
+
+
+```
+
+We can now create a table per type of senescence to show the amount of significant found differentially expressed
+genes.
+
+
+```{r, cache=TRUE}
+
+table(replictiveSen.dds.res$padj < 0.01)
+table(oncoGeneSen.dds.res$padj < 0.01)
+table(irSen.dds.res$padj < 0.01)
+```
+However not all of our findings might be significant. In order to be more sure that the genes we found
+are really significant we will only keep genes with a p-value lower than 0.01 ( 1% ). Also we will
+sort the genes based on p-value.
+
+```{r, cache=TRUE}
+
+replictiveSen.dds.res <-
+  replictiveSen.dds.res[which(replictiveSen.dds.res$padj < 0.01), ]
+replictiveSen.dds.res <-
+  replictiveSen.dds.res[order(replictiveSen.dds.res$padj),]
+
+oncoGeneSen.dds.res <-
+  oncoGeneSen.dds.res[which(oncoGeneSen.dds.res$padj < 0.01), ]
+oncoGeneSen.dds.res <-
+  oncoGeneSen.dds.res[order(oncoGeneSen.dds.res$padj),]
+
+irSen.dds.res <- irSen.dds.res[which(irSen.dds.res$padj < 0.01), ]
+irSen.dds.res <- irSen.dds.res[order(irSen.dds.res$padj),]
+
+```
+
+Now we have three ordered low-pvalue lists of genes that are differentially expressed for each data-set that consists of a type of senescence.
+
+## heatmaps
+
+```{r, cache=TRUE}
+#heatmap newest 
+rep <- matrix(replictiveSen.dds.res$log2FoldChange)
+rownames(rep) <- rownames(replictiveSen.dds.res)
+colnames(rep) <- "Replicative"
+
+onc <- matrix(oncoGeneSen.dds.res$log2FoldChange)
+rownames(onc) <- rownames(oncoGeneSen.dds.res)
+colnames(onc) <- "Oncogene"
+
+rad <- matrix(irSen.dds.res$log2FoldChange)
+rownames(rad) <- rownames(irSen.dds.res)
+colnames(rad) <- "Radiation"
+
+merged <- merge(rep, onc ,  by = 0, all = TRUE)
+rownames(merged) <- merged$Row.names
+merged <- merged[,c(2,3)]
+merged <- merge(merged, rad ,  by = 0, all = TRUE)
+
+rownames(merged) <- merged$Row.names
+merged <- merged[,c(2,3,4)]
+
+repOncIr.heatmap.data <- merged
+
+
+merged[is.na(merged)] <- 0 # log2(1)
+repOncIr.heatmap.data[is.na(repOncIr.heatmap.data)] <- 0 # log2(1)
+
+head(repOncIr.heatmap.data)
+
+repOncIr.heatmap.data <- as.data.frame(repOncIr.heatmap.data)
+
+
+select <- order(rowMeans(repOncIr.heatmap.data),decreasing = F)[1:15]
+repOncIr.heatmap.data.low <- repOncIr.heatmap.data[select, ]
+select <- order(rowMeans(repOncIr.heatmap.data),decreasing = T)[1:15]
+repOncIr.heatmap.data.high <- repOncIr.heatmap.data[select, ]
+
+repOncIr.heatmap.data.high <- rbind( repOncIr.heatmap.data.high,repOncIr.heatmap.data.low)
+
+```
+After preparing the data we can now start to draw the heatmap.
+
+
+We first have to generate the colors and breaks used to generate an 
+image where zero can be black. Otherwize the colors do not correspond 
+correctley with the heatmapp. 
+
+```{r heatmapDeseq, results='hide', message=FALSE, warning=FALSE,cache=TRUE,out.width = "1001px",out.height = "1001px"}
+
+paletteLength <- 4000
+myColor <- colorRampPalette(c("red", "black", "green"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(repOncIr.heatmap.data.high), 0, length.out=ceiling(paletteLength/2) ), 
+              seq(max(repOncIr.heatmap.data.high)/paletteLength, max(repOncIr.heatmap.data.high), length.out=floor(paletteLength/2)))
+
+pheatmap(
+  main = "Heatmap\nDifferences of types of senescence in FC by DESeq (pval < 0.01)",
+  repOncIr.heatmap.data.high,
+  cluster_rows = T,
+  color=myColor, 
+breaks=myBreaks,
+  show_rownames = T,
+  cluster_cols = T,
+  fontsize=12,
+  fontsize_row = 12,
+  border_color="grey"
+)
+
+```
+
+We can generate the same for the entire data. 
+
+```{r, cache=TRUE,out.width = "900",out.height = "900px"}
+
+paletteLength <- 4000
+myColor <- colorRampPalette(c("red", "black", "green"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(repOncIr.heatmap.data), 0, length.out=ceiling(paletteLength/2) ), 
+              seq(max(repOncIr.heatmap.data)/paletteLength, max(repOncIr.heatmap.data), length.out=floor(paletteLength/2)))
+
+
+
+pheatmap(merged, 
+color=myColor, 
+breaks=myBreaks,
+show_rownames=F,
+  fontsize=9,
+  fontsize_row = 9,
+  border_color=NA,
+  #~ cellwidth=20,
+  height=905
+
+)
+
+
+
+
+```
+
+We save the genes as csv files to later select membrane coding genes 
+by a python script. We will save csv's for sorted on adjusted 
+pvalue and log fold change. 
+
+
+```{r, cache=TRUE}
+
+
+replicative.csv <-
+  cbind(
+    rownames(replictiveSen.dds.res),
+    replictiveSen.dds.res$log2FoldChange,
+    replictiveSen.dds.res$lfcSE,
+    replictiveSen.dds.res$stat,
+    replictiveSen.dds.res$pvalue,
+    replictiveSen.dds.res$padj)
+colnames(replicative.csv) <- c("Genes","log2FoldChange","lfcSE","stat","pvalue","padj")
+
+oncoGeneSen.csv <-
+  cbind(
+    rownames(oncoGeneSen.dds.res),
+    oncoGeneSen.dds.res$log2FoldChange,
+    oncoGeneSen.dds.res$lfcSE,
+    oncoGeneSen.dds.res$stat,
+    oncoGeneSen.dds.res$pvalue,
+    oncoGeneSen.dds.res$padj)
+colnames(oncoGeneSen.csv) <- c("Genes","log2FoldChange","lfcSE","stat","pvalue","padj")
+
+radiation.csv <-
+  cbind(
+    rownames(irSen.dds.res),
+    irSen.dds.res$log2FoldChange,
+    irSen.dds.res$lfcSE,
+    irSen.dds.res$stat,
+    irSen.dds.res$pvalue,
+    irSen.dds.res$padj)
+colnames(radiation.csv) <- c("Genes","log2FoldChange","lfcSE","stat","pvalue","padj")
+
+
+
+
+replicative.csv.o2log <- replicative.csv[order(replicative.csv[,"log2FoldChange"], decreasing=TRUE ), ]
+oncoGeneSen.csv.o2log <- oncoGeneSen.csv[order(oncoGeneSen.csv[,"log2FoldChange"], decreasing=TRUE ), ]
+radiation.csv.o2log <- radiation.csv[order(radiation.csv[,"log2FoldChange"], decreasing=TRUE ), ]
+
+
+#~ write.csv(row.names=F,replicative.csv.o2log, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_M_replicative-FC-01-final.csv")
+#~ write.csv(row.names=F,oncoGeneSen.csv.o2log, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_M_oncogene-FC-01-final.csv")
+#~ write.csv(row.names=F,radiation.csv.o2log, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_M_radiation-FC-01-final.csv")
+
+```
+#~ 2=======================================================================================================================================
+## EdgeR 
+
+Because of the lack of data it is interesting to do another R-package for rna-seq analysis. We will use EdgeR 
+to try to find differentially expressed genes. Later we can add the results from DESeq and EdgeR together. 
+
+We already have the data to create the EdgeR objects. We will use the already protein coding genes from the 
+DESeq object. We use the function assay() to get the count data from this object. And we can put it directly into
+EdgeR. 
+
+Note:
+In the EdgeR user manual it states that it is more common to use a single factor design since it fails to 
+function with more factors. The manual does say it is possible but we have to use GLM. We created a 
+wrapper to automate this functionality since we use it more often.
+
+
+```{r edgerRep, cache=TRUE}
+replictiveSen.edgerRes <- EdgeRTopTags(replictiveSen.dds,model.matrix(~replictiveSen.condition+replictiveSen.cellStrain+replictiveSen.study),"replictiveSen.conditionReplicative")
+```
+
+
+We now have the results from the differential expression analysis using EdgeR for the replicative data set. 
+We will do a similar thing to the ois and ir data-sets.
+
+
+```{r EdgeROIS, cache=TRUE}
+oncoGeneSen.edgerRes <- EdgeRTopTags(oncoGeneSen.dds,model.matrix(~oncoGeneSen.condition+oncoGeneSen.study),"oncoGeneSen.conditionOIS")
+```
+
+For the radiation dataset we have to relevel the factors since otherwize because of the 
+design matrix consisting of a single factor the comparason will be made between irSen.conditionNo
+and the rest. We have to relvel in order to generate the irSen.conditionir. 
+
+Note:
+	We still use the same GLM model even though it might be better to use the common method because of the 
+	single factor in this calse. How ever we want to be steady on what we do and it is still possible to use 
+	the GLM in this situation. The new name will be irSen.condition.relevelIrir which is generated. 
+
+
+```{r EdgeRIR, cache=TRUE}
+irSen.condition.relevelIr <- relevel(factor(irSen.condition),"No")
+irSen.edgerRes <- EdgeRTopTags(irSen.dds,model.matrix(~irSen.condition.relevelIr),"irSen.condition.relevelIrir")# irSen.condition.relevelIrir not a typo but generated automatically.
+```
+
+
+
+
+
+
+
+```{r}
+#~ write.csv(row.names=T,replictiveSen.edgerRes, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_M_replicative-final.csv")
+#~ write.csv(row.names=T,oncoGeneSen.edgerRes, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_M_onco-final.csv")
+#~ write.csv(row.names=T,irSen.edgerRes, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_M_ir-final.csv")
+```
+
+
+
+
+
+##3 meta-analysis using DESeq and replicative senescence data
+
+We will now start the meta-analysis. This will compare the de genes of the different studies in used merged 
+prior in one dataset consisting of the data of one type of senescence. 
+
+
+We are creating a list of the pvalues obtained from the differential expression analysis. We can 
+later use this list to do tests the see how significant the values are shared amongsed the different 
+datasets. 
+
+
+
+First we have to perform differential expression analysis for the 
+individual data-sets in the replicative-data-set. 
+
+
+
+
+We first create the missing dds for rai and alspach
+
+
+```{r metaDeseqRep33, cach=TRUE}
+
+
+data.rai.countdata <- as.matrix(data.rai)
+
+data.rai.coldata <-
+  data.frame(row.names = colnames(data.rai.countdata), data.rai.condition)
+data.rai.coldata <-
+  cbind(data.rai.coldata,
+        data.frame(
+          row.names = colnames(data.rai.countdata),
+          data.rai.cellStrain
+        ))
+data.rai.coldata <-
+  cbind(data.rai.coldata,
+        data.frame(row.names = colnames(data.rai.countdata),
+                   data.rai.study))
+                   
+                   
+                   data.alspach.countdata <- as.matrix(data.alspach)
+
+data.alspach.coldata <-
+  data.frame(row.names = colnames(data.alspach.countdata), data.alspach.condition)
+data.alspach.coldata <-
+  cbind(data.alspach.coldata,
+        data.frame(
+          row.names = colnames(data.alspach.countdata),
+          data.alspach.cellStrain
+        ))
+data.alspach.coldata <-
+  cbind(data.alspach.coldata,
+        data.frame(row.names = colnames(data.alspach.countdata),
+                   data.alspach.study))
+
+                   
+
+
+data.rai.dds <-
+  DESeqDataSetFromMatrix(
+    countData = data.rai.countdata,
+    colData = data.rai.coldata,
+    design =  ~ data.rai.condition  
+  )
+
+
+data.alspach.dds <-
+  DESeqDataSetFromMatrix(
+    countData = data.alspach.countdata,
+    colData = data.alspach.coldata,
+    design =  ~ data.alspach.condition 
+  )
+
+
+
+```
+
+
+
+
+Then we have to remove non-protein coding genes from these data-sets.
+
+
+```{r metaDeseqRep666 ,cache=TRUE}
+data.marthandan.dds <- ProteinCodingGenesExtractor(data.marthandan.dds)
+data.rai.dds <- ProteinCodingGenesExtractor(data.rai.dds)
+data.alspach.dds <- ProteinCodingGenesExtractor(data.alspach.dds)
+```
+And remove zero counting genes 
+
+
+
+```{r metaDeseqRep667 ,cache=TRUE}
+data.marthandan.dds <- data.marthandan.dds[rowSums(counts(data.marthandan.dds)) > 0,]
+data.rai.dds <- data.rai.dds[rowSums(counts(data.rai.dds)) > 0,]
+data.alspach.dds <- data.alspach.dds[rowSums(counts(data.alspach.dds)) > 0,]
+```
+
+
+
+
+## Run the DESeq pipeline
+We can now run the deseq pipeline for the datasets.
+
+```{r metaDeseqRep255, cache=TRUE}
+data.marthandan.dds <- DESeq(data.marthandan.dds)
+data.rai.dds <- DESeq(data.rai.dds)
+data.alspach.dds  <- DESeq(data.alspach.dds)
+```
+
+
+Now we can start the differential expression analysis. It is very important to
+add the parameters for the selection of the type of senescence. Otherwise the result is
+might not be focusing on the senescence.
+
+The parameter alpha accounts for the cutoff ratio for optimizing the independent filtering.
+This value should be the same as the adjusted p-value cutoff (false discovery rate).
+
+
+
+```{r metaDeseqRep0, cache=TRUE}
+
+data.marthandan.dds.res <-
+  results(data.marthandan.dds,
+          contrast = c("data.marthandan.condition", "Replicative", "No"),
+          alpha = .01)
+
+data.rai.dds.res <-
+  results(data.rai.dds,
+          contrast = c("data.rai.condition", "Replicative", "No"),
+          alpha = .01)
+
+data.alspach.dds.res <-
+  results(data.alspach.dds,
+          contrast = c("data.alspach.condition", "Replicative", "No"),
+          alpha = .01)
+
+
+
+```
+
+
+We can now check if the datasets are uniformly distributed, with is essential in meta-analysis. 
+We will plot the histogram of the pvalues of the datasets. 
+
+
+```{r metaDeseqRep1, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+
+
+
+par(mfrow = c(1,3))
+hist(data.marthandan.dds.res$pvalue ,col = "lavender", main = "Distribution\nMarthandan", xlab = "p-values")
+hist(data.rai.dds.res$pvalue, col = "lavender", main = "Distribution\nRai", xlab = "p-values")
+hist(data.alspach.dds.res$pvalue, col = "lavender", main = "Distribution\nAlspach", xlab = "p-values")
+```
+
+
+The data is not uniform, we have to make it uniform. 
+
+
+```{r metaDeseqRep2, cache=TRUE}
+# using our wrapper with defaults ( see functions above )
+data.marthandan.dds.hts.res <- DdsHTSfilter(data.marthandan.dds,contrastValues=c("data.marthandan.condition","Replicative", "No"))
+data.rai.dds.hts.res <- DdsHTSfilter(data.rai.dds,contrastValues=c("data.rai.condition","Replicative", "No"))
+data.alspach.dds.hts.res <- DdsHTSfilter(data.alspach.dds,contrastValues=c("data.alspach.condition","Replicative", "No"))
+
+
+```
+
+```{r metaDeseqRep3,cache=TRUE}
+
+par(mfrow = c(1,3))
+hist(data.marthandan.dds.hts.res$pvalue, col = "lavender", main = "Distribution\nmarthandan", xlab = "p-values")
+hist(data.rai.dds.hts.res$pvalue, col = "lavender", main = "Distribution\nrai", xlab = "p-values")
+hist(data.alspach.dds.hts.res$pvalue, col = "lavender", main = "Distribution\nalspach", xlab = "p-values")
+
+```
+
+
+
+In order to be able to use the created data in the meta-analysis we
+have to have intersected genes. 
+
+```{r metaDeseqRep33q,cache=TRUE}
+
+
+data.marthandan.dds.hts.res.rownames <- rownames(data.marthandan.dds.hts.res)
+data.rai.dds.hts.res.rownames <- rownames(data.rai.dds.hts.res)
+data.alspach.dds.hts.res.rownames <- rownames(data.alspach.dds.hts.res)
+
+
+
+intersected.genes  <- Reduce(intersect, list(data.marthandan.dds.hts.res.rownames,data.rai.dds.hts.res.rownames,data.alspach.dds.hts.res.rownames))
+
+
+data.marthandan.dds.hts.res <- data.marthandan.dds.hts.res[intersected.genes, ]
+data.rai.dds.hts.res <- data.rai.dds.hts.res[intersected.genes, ]
+data.alspach.dds.hts.res <- data.alspach.dds.hts.res[intersected.genes, ]
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r metaDeseqRep4,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+rawpval <- list("pval1" = data.marthandan.dds.hts.res[["pvalue"]],
+                "pval2" = data.rai.dds.hts.res[["pvalue"]],
+                "pval3" = data.alspach.dds.hts.res[["pvalue"]])
+```
+
+We do the same for the fold change 
+
+```{r metaDeseqRep499898,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+
+FC <-
+  list("FC1" = data.marthandan.dds.hts.res[["log2FoldChange"]], 
+       "FC2" = data.rai.dds.hts.res[["log2FoldChange"]],
+       "FC3" = data.alspach.dds.hts.res[["log2FoldChange"]])
+
+
+
+```
+
+And for the adjusted p-values
+
+```{r metaDeseqRep5,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+adjpval <- list("DEmarthandan"=data.marthandan.dds.hts.res[["padj"]],
+                "DErai"=data.rai.dds.hts.res[["padj"]],
+                "DEalspach"=data.alspach.dds.hts.res[["padj"]])
+
+
+```
+
+
+Identify the significant adjusted pvalues in the datasets of the list of datasets. 
+```{r metaDeseqRep6,  cache=TRUE}
+
+DE <- mapply(adjpval, FUN=function(x) ifelse(x <= 0.01, 1, 0))
+
+
+
+```
+
+
+
+
+
+Now we can perform tests to check which data is differentially expressed using fishers method and inverse normal method. 
+
+```{r metaDeseqRep7, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+fishcomb <- fishercomb(rawpval, BHth = 0.01)
+hist(fishcomb$rawpval, breaks=100, col="grey", main="Fisher method",
+     xlab = "Raw p-values (meta-analysis)")
+
+invnormcomb <- invnorm(rawpval,nrep=c(3,2,2), BHth = 0.01)
+hist(invnormcomb$rawpval, breaks=100, col="grey",
+     main="Inverse normal method",
+     xlab = "Raw p-values (meta-analysis)")
+
+```
+
+
+Everything seems fine no new peaks appear, so lets move on. 
+We create an object that will store the information about which adjusted pvalue was significant for 
+each test. 
+
+```{r metaDeseqRep8, cache=TRUE}
+DEresults <- data.frame(
+  DE,
+  "DE.fishercomb" = ifelse(fishcomb$adjpval <= 0.01, 1, 0),
+  "DE.invnorm" = ifelse(invnormcomb$adjpval <= 0.01, 1, 0)
+)
+
+rownames(DEresults) <- rownames(data.alspach.dds.hts.res)
+
+```
+Now we can prepare the data for the venn diagram. 
+
+```{r metaDeseqRep9, cache=TRUE}
+
+signsFC <- mapply(FC, FUN=function(x) sign(x))
+sumsigns <- apply(signsFC,1,sum)
+commonsgnFC <- ifelse(abs(sumsigns)==dim(signsFC)[2], sign(sumsigns),0)
+
+unionDE <- unique(c(fishcomb$DEindices, invnormcomb$DEindices))
+FC.selecDE <-
+  data.frame(DEresults[unionDE, ],
+             do.call(cbind, FC)[unionDE, ],
+             signFC = commonsgnFC[unionDE])
+keepDE <- FC.selecDE[which(abs(FC.selecDE$signFC) == 1), ]
+conflictDE <- FC.selecDE[which(FC.selecDE$signFC == 0), ]
+dim(FC.selecDE)
+
+
+dim(keepDE)
+dim(conflictDE)
+head(keepDE)
+
+fishcomb_de <- rownames(keepDE)[which(keepDE[,"DE.fishercomb"]==1)]
+invnorm_de <- rownames(keepDE)[which(keepDE[,"DE.invnorm"]==1)]
+indstudy_de <- list(rownames(keepDE)[which(keepDE[,"DEmarthandan"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DErai"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DEalspach"]==1)])
+head(IDD.IRR(fishcomb_de,indstudy_de))
+
+
+```
+
+
+We can now start to create the venn diagram.
+
+
+
+```{r metaDeseqRep10, cache=TRUE}
+venn.diagram(
+  x = list(
+
+    marthandan = which(keepDE[, "DEmarthandan"] == 1),
+    rai = which(keepDE[, "DErai"] ==1),
+    alspach = which(keepDE[, "DEalspach"] ==1),
+    fisher = which(keepDE[, "DE.fishercomb"] ==1),
+    invnorm = which(keepDE[, "DE.invnorm"] ==1)
+  ),
+  filename = "deseq-meta-replicative-final.tiff",
+  col = 2,
+
+  fill = c("cornflowerblue", "green", "yellow", "darkorchid1","red"),
+  alpha = 0.55,
+
+  cex = 1.1,
+  fontfamily = "serif",
+  fontface = "bold",
+
+  cat.col = c("black", "black", "black", "green","green"),
+  cat.cex = 1.2,
+  cat.pos = 0,
+  cat.dist = 0.052,
+  cat.fontfamily = "serif",
+  rotation.degree = 102,
+  margin = 0.01
+)
+
+
+
+
+```
+
+```{r metaDeseqRep1099,cache=TRUE}
+all_true <- keepDE[apply(keepDE[,c(1,2,3,4,5)],1,function(z) !any(z==0)),]
+all_true <- all_true[apply(all_true[,c(1,2,3,4,5)],1,function(z) !any(is.na(z))),]
+sorted.csv.dge.me.rep <- all_true[order(all_true$FC1),][,c(6,7,8)]
+```
+
+```{r metaDeseqRep129,cache=TRUE}
+#~ write.csv(row.names=T,sorted.csv.dge.me.rep, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_me_replicative-final.csv")
+```
+#~ ![Note: This image was written to disk as tiff and converted to png using gimp.](/home/ghost/Desktop/stage/scripts/R/png/deseq-meta-replicative-final.png)
+
+
+
+========================================================================================================================================================================
+#~ ##4 deseq oncogene meta-analysis
+
+
+## meta-analysis using DESeq and replicative senescence data
+
+We will now start the meta-analysis. This will compare the de genes of the different studies in used merged 
+prior in one dataset consisting of the data of one type of senescence. 
+
+
+We are creating a list of the pvalues obtained from the differential expression analysis. We can 
+later use this list to do tests the see how significant the values are shared amongsed the different 
+datasets. 
+
+
+
+First we have to perform differential expression analysis for the 
+individual data-sets in the replicative-data-set. 
+
+
+
+
+We first create the missing dds for rai and alspach
+
+
+```{r metaDeseqOnc33, cach=TRUE}
+
+
+data.herranz.countdata <- as.matrix(data.herranz)
+data.dilovskaya.countdata <- as.matrix(data.dilovskaya)
+
+data.herranz.coldata <-
+  data.frame(row.names = colnames(data.herranz.countdata), data.herranz.condition)
+data.herranz.coldata <-
+  cbind(data.herranz.coldata,
+        data.frame(
+          row.names = colnames(data.herranz.countdata),
+          data.herranz.cellStrain
+        ))
+data.herranz.coldata <-
+  cbind(data.herranz.coldata,
+        data.frame(row.names = colnames(data.herranz.countdata),
+                   data.herranz.study))
+                   
+                   
+                   data.alspach.countdata <- as.matrix(data.alspach)
+
+data.dilovskaya.coldata <-
+  data.frame(row.names = colnames(data.dilovskaya.countdata), data.dilovskaya.condition)
+data.dilovskaya.coldata <-
+  cbind(data.dilovskaya.coldata,
+        data.frame(
+          row.names = colnames(data.dilovskaya.countdata),
+          data.dilovskaya.cellStrain
+        ))
+data.dilovskaya.coldata <-
+  cbind(data.dilovskaya.coldata,
+        data.frame(row.names = colnames(data.dilovskaya.countdata),
+                   data.dilovskaya.study))
+
+                   
+
+
+data.herranz.dds <-
+  DESeqDataSetFromMatrix(
+    countData = data.herranz.countdata,
+    colData = data.herranz.coldata,
+    design =  ~ data.herranz.condition  
+  )
+
+
+data.dilovskaya.dds <-
+  DESeqDataSetFromMatrix(
+    countData = data.dilovskaya.countdata,
+    colData = data.dilovskaya.coldata,
+    design =  ~ data.dilovskaya.condition 
+  )
+
+
+
+```
+
+
+
+
+Then we have to remove non-protein coding genes from these data-sets.
+
+
+```{r metaDeseqOnc666 ,cache=TRUE}
+data.herranz.dds <- ProteinCodingGenesExtractor(data.herranz.dds)
+data.dilovskaya.dds <- ProteinCodingGenesExtractor(data.dilovskaya.dds)
+```
+And remove zero counting genes 
+
+
+
+```{r metaDeseqOnc667 ,cache=TRUE}
+data.herranz.dds <- data.herranz.dds[rowSums(counts(data.herranz.dds)) > 0,]
+data.dilovskaya.dds <- data.dilovskaya.dds[rowSums(counts(data.dilovskaya.dds)) > 0,]
+```
+
+
+
+
+## Run the DESeq pipeline
+We can now run the deseq pipeline for the datasets.
+
+```{r metaDeseqOnc255, cache=TRUE}
+data.herranz.dds <- DESeq(data.herranz.dds)
+data.dilovskaya.dds  <- DESeq(data.dilovskaya.dds)
+```
+
+
+Now we can start the differential expression analysis. It is very important to
+add the parameters for the selection of the type of senescence. Otherwise the result is
+might not be focusing on the senescence.
+
+The parameter alpha accounts for the cutoff ratio for optimizing the independent filtering.
+This value should be the same as the adjusted p-value cutoff (false discovery rate).
+
+
+
+```{r metaDeseqOnc0, cache=TRUE}
+
+data.herranz.dds.res <-
+  results(data.herranz.dds,
+          contrast = c("data.herranz.condition", "OIS", "No"),
+          alpha = .01)
+
+data.dilovskaya.dds.res <-
+  results(data.dilovskaya.dds,
+          contrast = c("data.dilovskaya.condition", "OIS", "No"),
+          alpha = .01)
+
+
+
+```
+
+
+We can now check if the datasets are uniformly distributed, with is essential in meta-analysis. 
+We will plot the histogram of the pvalues of the datasets. 
+
+
+```{r metaDeseqOnc1, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+
+
+
+par(mfrow = c(1,2))
+hist(data.herranz.dds.res$pvalue, col = "lavender", main = "Distribution\nherranz", xlab = "p-values")
+hist(data.dilovskaya.dds.res$pvalue, col = "lavender", main = "Distribution\ndilovskaya", xlab = "p-values")
+
+```
+
+
+The data is not uniform, we have to make it uniform. 
+
+
+```{r metaDeseqOnc2, cache=TRUE}
+# using our wrapper with defaults ( see functions above )
+data.herranz.dds.hts.res <- DdsHTSfilter(data.herranz.dds,contrastValues=c("data.herranz.condition","OIS", "No"))
+data.dilovskaya.dds.hts.res <- DdsHTSfilter(data.dilovskaya.dds,contrastValues=c("data.dilovskaya.condition","OIS", "No"))
+
+
+```
+
+```{r metaDeseqOnc3,cache=TRUE}
+
+par(mfrow = c(1,2))
+hist(data.herranz.dds.hts.res$pvalue, col = "lavender", main = "Distribution\nherranz", xlab = "p-values")
+hist(data.dilovskaya.dds.hts.res$pvalue, col = "lavender", main = "Distribution\ndilovskaya", xlab = "p-values")
+
+
+```
+
+
+
+In order to be able to use the created data in the meta-analysis we
+have to have intersected genes. 
+
+```{r metaDeseqOnc33q,cache=TRUE}
+
+
+data.herranz.dds.hts.res.rownames <- rownames(data.herranz.dds.hts.res)
+data.dilovskaya.dds.hts.res.rownames <- rownames(data.dilovskaya.dds.hts.res)
+
+
+
+intersected.genes  <- Reduce(intersect, list(data.herranz.dds.hts.res.rownames,data.dilovskaya.dds.hts.res.rownames))
+
+
+data.herranz.dds.hts.res <- data.herranz.dds.hts.res[intersected.genes, ]
+data.dilovskaya.dds.hts.res <- data.dilovskaya.dds.hts.res[intersected.genes, ]
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r metaDeseqOnc4,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+rawpval <- list("pval2" = data.herranz.dds.hts.res[["pvalue"]],
+                "pval3" = data.dilovskaya.dds.hts.res[["pvalue"]])
+```
+
+We do the same for the fold change 
+
+```{r metaDeseqOnc4333,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+
+FC <-
+  list("FC2" = data.herranz.dds.hts.res[["log2FoldChange"]],
+       "FC3" = data.dilovskaya.dds.hts.res[["log2FoldChange"]])
+
+
+
+```
+
+And for the adjusted p-values
+
+```{r metaDeseqOnc5,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+adjpval <- list("DEherranz"=data.herranz.dds.hts.res[["padj"]],
+                "DEdilovskaya"=data.dilovskaya.dds.hts.res[["padj"]])
+
+
+```
+
+
+Identify the significant adjusted pvalues in the datasets of the list of datasets. 
+```{r metaDeseqOnc6,  cache=TRUE}
+
+DE <- mapply(adjpval, FUN=function(x) ifelse(x <= 0.01, 1, 0))
+
+
+
+```
+
+
+
+
+
+Now we can perform tests to check which data is differentially expressed using fishers method and inverse normal method. 
+
+```{r metaDeseqOnc7, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+fishcomb <- fishercomb(rawpval, BHth = 0.01)
+hist(fishcomb$rawpval, breaks=100, col="grey", main="Fisher method",
+     xlab = "Raw p-values (meta-analysis)")
+
+invnormcomb <- invnorm(rawpval,nrep=c(3,3), BHth = 0.01)
+hist(invnormcomb$rawpval, breaks=100, col="grey",
+     main="Inverse normal method",
+     xlab = "Raw p-values (meta-analysis)")
+
+```
+
+
+Everything seems fine no new peaks appear, so lets move on. 
+We create an object that will store the information about which adjusted pvalue was significant for 
+each test. 
+
+```{r metaDeseqOnc8, cache=TRUE}
+DEresults <- data.frame(
+  DE,
+  "DE.fishercomb" = ifelse(fishcomb$adjpval <= 0.01, 1, 0),
+  "DE.invnorm" = ifelse(invnormcomb$adjpval <= 0.01, 1, 0)
+)
+head(DEresults)
+
+```
+
+We have to assing the genes to the column, we will do this by the 
+rownames. Since it is easier to use these later on, and do not really
+belong in the data itself. 
+
+
+```{r metaDeseqOnc128, cache=TRUE}
+rownames(DEresults) <- rownames(data.herranz.dds.hts.res)
+```
+
+
+
+
+
+Now we can prepare the data for the venn diagram. 
+
+```{r metaDeseqOnc9, cache=TRUE}
+
+signsFC <- mapply(FC, FUN=function(x) sign(x))
+sumsigns <- apply(signsFC,1,sum)
+commonsgnFC <- ifelse(abs(sumsigns)==dim(signsFC)[2], sign(sumsigns),0)
+
+unionDE <- unique(c(fishcomb$DEindices, invnormcomb$DEindices))
+FC.selecDE <-
+  data.frame(DEresults[unionDE, ],
+             do.call(cbind, FC)[unionDE, ],
+             signFC = commonsgnFC[unionDE])
+keepDE <- FC.selecDE[which(abs(FC.selecDE$signFC) == 1), ]
+conflictDE <- FC.selecDE[which(FC.selecDE$signFC == 0), ]
+dim(FC.selecDE)
+
+
+dim(keepDE)
+dim(conflictDE)
+head(keepDE)
+
+fishcomb_de <- rownames(keepDE)[which(keepDE[,"DE.fishercomb"]==1)]
+invnorm_de <- rownames(keepDE)[which(keepDE[,"DE.invnorm"]==1)]
+indstudy_de <- list(rownames(keepDE)[which(keepDE[,"DEherranz"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DEdilovskaya"]==1)])
+head(IDD.IRR(fishcomb_de,indstudy_de))
+
+
+```
+
+
+We can now start to create the venn diagram.
+
+
+
+```{r metaDeseqOnc10, cache=TRUE}
+venn.diagram(
+  x = list(
+
+    
+    herranz = which(keepDE[, "DEherranz"] ==1),
+    dilovskaya = which(keepDE[, "DEdilovskaya"] ==1),
+    fisher = which(keepDE[, "DE.fishercomb"] ==1),
+    invnorm = which(keepDE[, "DE.invnorm"] ==1)
+  ),
+  filename = "deseq-meta-onco-final.tiff",
+  col = 2,
+
+  fill = c("cornflowerblue", "green", "yellow", "darkorchid1"),
+  alpha = 0.55,
+
+  cex = 1.1,
+  fontfamily = "serif",
+  fontface = "bold",
+
+  cat.col = c("black", "black", "green", "green"),
+  cat.cex = 1.2,
+  cat.pos = 0,
+  cat.dist = 0.032,
+  cat.fontfamily = "serif",
+  rotation.degree = 0,
+  margin = 0.01
+)
+
+
+
+
+```
+
+
+
+
+```{r metaDeseqRep1059,cache=TRUE}
+
+all_true <- keepDE[apply(keepDE[,c(1,2,3,4)],1,function(z) !any(z==0)),]
+all_true <- all_true[apply(all_true[,c(1,2,3,4)],1,function(z) !any(is.na(z))),]
+sorted.csv.dge.me.onc <- all_true[order(all_true$FC2),][,c(5,6)]
+```
+
+```{r metaDeseqRep1209,cache=TRUE}
+
+write.csv(row.names=T,sorted.csv.dge.me.onc, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_me_oncogene-final.csv")
+```
+![Note: This image was written to disk as tiff and converted to png using gimp.](/home/ghost/Desktop/stage/scripts/R/png/deseq-meta-replicative-final.png)
+
+
+
+=================================================================================================================================================
+## 5 EdgeR meta-analysis replicative 
+
+
+This step is sitmilar to the one from edgeR before and the meta-analysis.
+This means that we can simply use the already cleaned up data from 
+the dds files. 
+
+
+
+```{r metaEdge523, cache=TRUE}
+data.marthandan.EdgeRTopTagsDeTagDis <- EdgeRTopTagsSingleDesign(data.marthandan.dds,c("No","Replicative"),data.marthandan.condition) 
+data.rai.EdgeRTopTagsDeTagDis <- EdgeRTopTagsSingleDesign(data.rai.dds,c("No","Replicative"),data.rai.condition) 
+data.alspach.EdgeRTopTagsDeTagDis <- EdgeRTopTagsSingleDesign(data.alspach.dds,c("No","Replicative"),data.alspach.condition) 
+```
+
+We can now check if the datasets are uniformly distributed, with is essential in meta-analysis. 
+We will plot the histogram of the pvalues of the datasets. 
+
+```{r metaEdge592, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+par(mfrow = c(1,3))
+
+hist(data.marthandan.EdgeRTopTagsDeTagDis$DE$table$PValue ,col = "lavender", main = "Distribution\nmarthandan", xlab = "p-values")
+hist(data.rai.EdgeRTopTagsDeTagDis$DE$table$PValue, col = "lavender", main = "Distribution\nrai", xlab = "p-values")
+hist(data.alspach.EdgeRTopTagsDeTagDis$DE$table$PValue, col = "lavender", main = "Distribution\nalspach", xlab = "p-values")
+```
+
+```{r metaEdge5923, cache=TRUE}
+data.marthandan.EdgeRTopTagsDeTagDis.hts <- HTSFilter(data.marthandan.EdgeRTopTagsDeTagDis$DE, DGEList=data.marthandan.EdgeRTopTagsDeTagDis$TAG, plot=FALSE)
+data.rai.EdgeRTopTagsDeTagDis.hts <- HTSFilter(data.rai.EdgeRTopTagsDeTagDis$DE, DGEList=data.rai.EdgeRTopTagsDeTagDis$TAG,  plot=FALSE)
+data.alspach.EdgeRTopTagsDeTagDis.hts <- HTSFilter(data.alspach.EdgeRTopTagsDeTagDis$DE, DGEList=data.alspach.EdgeRTopTagsDeTagDis$TAG, plot=FALSE)
+```
+
+
+
+
+
+```{r metaEdgenew5s92, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+par(mfrow = c(1,3))
+
+hist(data.marthandan.EdgeRTopTagsDeTagDis.hts$filteredData$table$PValue ,col = "lavender", main = "Distribution\nmarthandan", xlab = "p-values")
+hist(data.rai.EdgeRTopTagsDeTagDis.hts$filteredData$table$PValue, col = "lavender", main = "Distribution\nrai", xlab = "p-values")
+hist(data.alspach.EdgeRTopTagsDeTagDis.hts$filteredData$table$PValue, col = "lavender", main = "Distribution\nalspach", xlab = "p-values")
+```
+
+
+```{r metaEdge2222, cache=TRUE}
+# get genes intersected 
+a <- rownames(data.marthandan.EdgeRTopTagsDeTagDis.hts$filteredData$table)
+b <- rownames(data.rai.EdgeRTopTagsDeTagDis.hts$filteredData$table)
+c <- rownames(data.alspach.EdgeRTopTagsDeTagDis.hts$filteredData$table)
+
+
+intersected.genes  <- Reduce(intersect, list(a,b,c))
+
+data.marthandan.EdgeRTopTagsDeTagDis.hts.intersect <- data.marthandan.EdgeRTopTagsDeTagDis.hts$filteredData$table[intersected.genes, ]
+data.rai.EdgeRTopTagsDeTagDis.hts.intersect <- data.rai.EdgeRTopTagsDeTagDis.hts$filteredData$table[intersected.genes, ]
+data.alspach.EdgeRTopTagsDeTagDis.hts.intersect <- data.alspach.EdgeRTopTagsDeTagDis.hts$filteredData$table[intersected.genes, ]
+
+data.marthandan.DGEList.de.padjust <- p.adjust(data.marthandan.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.rai.DGEList.de.padjust <-        p.adjust(data.rai.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.alspach.DGEList.de.padjust <-    p.adjust(data.alspach.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+```
+
+
+In order to be able to use the created data in the meta-analysis we
+have to have intersected genes. 
+
+
+
+
+```{r metaEdge4,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+rawpval <- list("pval1" = data.marthandan.EdgeRTopTagsDeTagDis.hts.intersect$PValue,
+                "pval2" = data.rai.EdgeRTopTagsDeTagDis.hts.intersect$PValue,
+                "pval3" = data.alspach.EdgeRTopTagsDeTagDis.hts.intersect$PValue)
+```
+
+We do the same for the fold change 
+```{r metaEdge5927,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+
+FC <-
+  list("FC1" = data.marthandan.EdgeRTopTagsDeTagDis.hts.intersect$logFC,
+       "FC2" = data.rai.EdgeRTopTagsDeTagDis.hts.intersect$logFC,
+       "FC3" = data.alspach.EdgeRTopTagsDeTagDis.hts.intersect$logFC)
+```
+
+
+And for the adjusted p-values we have to generate them ourselves. 
+
+
+```{r metaEdge511, cache=TRUE}
+
+data.marthandan.EdgeRTopTags.padjust <- p.adjust(data.marthandan.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.rai.EdgeRTopTags.padjust <-        p.adjust(data.rai.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.alspach.EdgeRTopTags.padjust <-    p.adjust(data.alspach.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+```
+
+
+```{r metaEdge5,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+adjpval <- list("DEmarthandan"=data.marthandan.EdgeRTopTags.padjust,
+                "DErai"=data.rai.EdgeRTopTags.padjust,
+                "DEalspach"=data.alspach.EdgeRTopTags.padjust)
+
+
+```
+
+
+Identify the significant adjusted pvalues in the datasets of the list of datasets. 
+```{r metaEdge6,  cache=TRUE}
+
+DE <- mapply(adjpval, FUN=function(x) ifelse(x <= 0.01, 1, 0))
+
+
+
+```
+
+Now we can perform tests to check which data is differentially expressed using fishers method and inverse normal method. 
+
+```{r metaEdge7, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+fishcomb <- fishercomb(rawpval, BHth = 0.01)
+hist(fishcomb$rawpval, breaks=100, col="grey", main="Fisher method",
+     xlab = "Raw p-values (meta-analysis)")
+
+invnormcomb <- invnorm(rawpval,nrep=c(3,2,2), BHth = 0.01)
+hist(invnormcomb$rawpval, breaks=100, col="grey",
+     main="Inverse normal method",
+     xlab = "Raw p-values (meta-analysis)")
+
+```
+#~ 
+#~ 
+Everything seems fine no new peaks appear, so lets move on. 
+We create an object that will store the information about which adjusted pvalue was significant for 
+each test. 
+
+```{r metaEdge8, cache=TRUE}
+
+DEresults <- data.frame(
+  DE,
+  "DE.fishercomb" = ifelse(fishcomb$adjpval <= 0.01, 1, 0),
+  "DE.invnorm" = ifelse(invnormcomb$adjpval <= 0.01, 1, 0)
+)
+
+
+
+
+
+#~ 
+#~ 
+
+
+```{r metaEdge83222, cache=TRUE}
+rownames(DEresults) <- rownames(data.alspach.EdgeRTopTagsDeTagDis.hts.intersect)
+```
+
+Now we can prepare the data for the venn diagram. 
+
+```{r metaEdge9, cache=TRUE}
+
+signsFC <- mapply(FC, FUN=function(x) sign(x))
+sumsigns <- apply(signsFC,1,sum)
+commonsgnFC <- ifelse(abs(sumsigns)==dim(signsFC)[2], sign(sumsigns),0)
+
+unionDE <- unique(c(fishcomb$DEindices, invnormcomb$DEindices))
+FC.selecDE <-
+  data.frame(DEresults[unionDE, ],
+             do.call(cbind, FC)[unionDE, ],
+             signFC = commonsgnFC[unionDE])
+keepDE <- FC.selecDE[which(abs(FC.selecDE$signFC) == 1), ]
+conflictDE <- FC.selecDE[which(FC.selecDE$signFC == 0), ]
+dim(FC.selecDE)
+
+dim(keepDE)
+dim(conflictDE)
+head(keepDE)
+
+fishcomb_de <- rownames(keepDE)[which(keepDE[,"DE.fishercomb"]==1)]
+invnorm_de <- rownames(keepDE)[which(keepDE[,"DE.invnorm"]==1)]
+indstudy_de <- list(rownames(keepDE)[which(keepDE[,"DEmarthandan"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DErai"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DEalspach"]==1)])
+head(IDD.IRR(fishcomb_de,indstudy_de))
+
+
+```
+
+
+We can now start to create the venn diagram.
+
+
+
+```{r metaEdge10, cache=TRUE}
+venn.diagram(
+  x = list(
+    marthandan = which(keepDE[, "DEmarthandan"] == 1),
+    rai = which(keepDE[, "DErai"] ==1),
+    alspach = which(keepDE[, "DEalspach"] ==1),
+    fisher = which(keepDE[, "DE.fishercomb"] ==1),
+    invnorm = which(keepDE[, "DE.invnorm"] ==1)
+  ),
+  filename = "edger-meta-replicative-final.tiff",
+  col = 2,
+
+  fill = c("cornflowerblue", "green", "yellow", "darkorchid1","red"),
+  alpha = 0.55,
+
+  cex = 1.1,
+  fontfamily = "serif",
+  fontface = "bold",
+
+  cat.col = c("black", "black", "black", "green","green"),
+  cat.cex = 1.2,
+  cat.pos = 0,
+  cat.dist = 0.052,
+  cat.fontfamily = "serif",
+  rotation.degree = 102,
+  margin = 0.01
+)
+
+```
+
+
+
+
+
+```{r metaDeseqRep109119,cache=TRUE}
+all_true <- keepDE[apply(keepDE[,c(1,2,3,4,5)],1,function(z) !any(z==0)),]
+all_true <- all_true[apply(all_true[,c(1,2,3,4,5)],1,function(z) !any(is.na(z))),]
+sorted.csv.dge.me.rep <- all_true[order(all_true$FC1),][,c(6,7,8)]
+```
+
+```{r metaDeseqRep12669,cache=TRUE}
+#~ write.csv(row.names=T,sorted.csv.dge.me.rep, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_me_replicative-final.csv")
+```
+#~ ![Note: This image was written to disk as tiff and converted to png using gimp.](/home/ghost/Desktop/stage/scripts/R/png/deseq-meta-replicative-final.png)
+
+
+
+#~ 
+#~ 
+=================================================================================================================================================
+## EdgeR meta-analysis oncogene 
+#~ 
+
+This step is sitmilar to the one from edgeR before and the meta-analysis.
+This means that we can simply use the already cleaned up data from 
+the dds files. 
+
+
+
+```{r metaEdge1523, cache=TRUE}
+data.herranz.EdgeRTopTagsDeTagDis <- EdgeRTopTagsSingleDesign(data.herranz.dds,c("No","OIS"),data.herranz.condition) 
+data.dilovskaya.EdgeRTopTagsDeTagDis <- EdgeRTopTagsSingleDesign(data.dilovskaya.dds,c("No","OIS"),data.dilovskaya.condition) 
+
+
+
+```
+
+
+
+
+
+We can now check if the datasets are uniformly distributed, with is essential in meta-analysis. 
+We will plot the histogram of the pvalues of the datasets. 
+
+```{r metaEdge1592, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+par(mfrow = c(1,2))
+hist(data.herranz.EdgeRTopTagsDeTagDis$DE$table$PValue, col = "lavender", main = "Distribution\nherranz", xlab = "p-values")
+hist(data.dilovskaya.EdgeRTopTagsDeTagDis$DE$table$PValue, col = "lavender", main = "Distribution\ndilovskaya", xlab = "p-values")
+```
+
+```{r metaEdge15923, cache=TRUE}
+data.herranz.EdgeRTopTagsDeTagDis.hts <- HTSFilter(data.herranz.EdgeRTopTagsDeTagDis$DE, DGEList=data.herranz.EdgeRTopTagsDeTagDis$TAG,  plot=FALSE)
+data.dilovskaya.EdgeRTopTagsDeTagDis.hts <- HTSFilter(data.dilovskaya.EdgeRTopTagsDeTagDis$DE, DGEList=data.dilovskaya.EdgeRTopTagsDeTagDis$TAG, plot=FALSE)
+```
+
+
+
+
+
+```{r metaEdge1new5s92, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+par(mfrow = c(1,2))
+hist(data.herranz.EdgeRTopTagsDeTagDis.hts$filteredData$table$PValue, col = "lavender", main = "Distribution\nherranz", xlab = "p-values")
+hist(data.dilovskaya.EdgeRTopTagsDeTagDis.hts$filteredData$table$PValue, col = "lavender", main = "Distribution\ndilovskaya", xlab = "p-values")
+```
+
+
+```{r metaEdge12222, cache=TRUE}
+# get genes intersected 
+
+b <- rownames(data.herranz.EdgeRTopTagsDeTagDis.hts$filteredData$table)
+c <- rownames(data.dilovskaya.EdgeRTopTagsDeTagDis.hts$filteredData$table)
+
+
+intersected.genes  <- Reduce(intersect, list(a,b,c))
+
+data.herranz.EdgeRTopTagsDeTagDis.hts.intersect <- data.herranz.EdgeRTopTagsDeTagDis.hts$filteredData$table[intersected.genes, ]
+data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect <- data.dilovskaya.EdgeRTopTagsDeTagDis.hts$filteredData$table[intersected.genes, ]
+
+data.herranz.DGEList.de.padjust <-        p.adjust(data.herranz.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.dilovskaya.DGEList.de.padjust <-    p.adjust(data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+```
+
+
+In order to be able to use the created data in the meta-analysis we
+have to have intersected genes. 
+
+
+
+
+```{r metaEdge14,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+rawpval <- list("pval1" = data.herranz.EdgeRTopTagsDeTagDis.hts.intersect$PValue,
+                "pval2" = data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect$PValue)
+```
+
+We do the same for the fold change 
+```{r metaEdge15927,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+
+
+
+FC <-
+  list(
+       "FC1" = data.herranz.EdgeRTopTagsDeTagDis.hts.intersect$logFC,
+       "FC2" = data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect$logFC)
+```
+
+
+And for the adjusted p-values we have to generate them ourselves. 
+
+
+```{r metaEdge1511, cache=TRUE}
+
+data.herranz.EdgeRTopTags.padjust <-        p.adjust(data.herranz.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+data.dilovskaya.EdgeRTopTags.padjust <-    p.adjust(data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect$PValue, method = "BH")
+```
+
+
+```{r metaEdge15,results='hide', message=FALSE, warning=FALSE,  cache=TRUE}
+adjpval <- list(
+                "DEherranz"=data.herranz.EdgeRTopTags.padjust,
+                "DEdilovskaya"=data.dilovskaya.EdgeRTopTags.padjust)
+
+
+```
+
+
+Identify the significant adjusted pvalues in the datasets of the list of datasets. 
+```{r metaEdge16,  cache=TRUE}
+
+DE <- mapply(adjpval, FUN=function(x) ifelse(x <= 0.01, 1, 0))
+
+
+
+```
+
+Now we can perform tests to check which data is differentially expressed using fishers method and inverse normal method. 
+
+```{r metaEdge17, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+fishcomb <- fishercomb(rawpval, BHth = 0.01)
+hist(fishcomb$rawpval, breaks=100, col="grey", main="Fisher method",
+     xlab = "Raw p-values (meta-analysis)")
+
+invnormcomb <- invnorm(rawpval,nrep=c(3,3), BHth = 0.01)
+hist(invnormcomb$rawpval, breaks=100, col="grey",
+     main="Inverse normal method",
+     xlab = "Raw p-values (meta-analysis)")
+
+```
+#~ 
+#~ 
+Everything seems fine no new peaks appear, so lets move on. 
+We create an object that will store the information about which adjusted pvalue was significant for 
+each test. 
+
+```{r metaEdge18, cache=TRUE}
+
+DEresults <- data.frame(
+  DE,
+  "DE.fishercomb" = ifelse(fishcomb$adjpval <= 0.01, 1, 0),
+  "DE.invnorm" = ifelse(invnormcomb$adjpval <= 0.01, 1, 0)
+)
+
+```
+
+```{r metaEdge418, cache=TRUE}
+
+rownames(DEresults) <- rownames(data.dilovskaya.EdgeRTopTagsDeTagDis.hts.intersect)
+
+```
+
+
+
+Now we can prepare the data for the venn diagram. 
+
+```{r metaEdge19, cache=TRUE}
+
+signsFC <- mapply(FC, FUN=function(x) sign(x))
+sumsigns <- apply(signsFC,1,sum)
+commonsgnFC <- ifelse(abs(sumsigns)==dim(signsFC)[2], sign(sumsigns),0)
+
+unionDE <- unique(c(fishcomb$DEindices, invnormcomb$DEindices))
+FC.selecDE <-
+  data.frame(DEresults[unionDE, ],
+             do.call(cbind, FC)[unionDE, ],
+             signFC = commonsgnFC[unionDE])
+keepDE <- FC.selecDE[which(abs(FC.selecDE$signFC) == 1), ]
+conflictDE <- FC.selecDE[which(FC.selecDE$signFC == 0), ]
+dim(FC.selecDE)
+
+dim(keepDE)
+dim(conflictDE)
+head(keepDE)
+
+fishcomb_de <- rownames(keepDE)[which(keepDE[,"DE.fishercomb"]==1)]
+invnorm_de <- rownames(keepDE)[which(keepDE[,"DE.invnorm"]==1)]
+indstudy_de <- list(
+                    rownames(keepDE)[which(keepDE[,"DEherranz"]==1)],
+                    rownames(keepDE)[which(keepDE[,"DEdilovskaya"]==1)])
+head(IDD.IRR(fishcomb_de,indstudy_de))
+
+
+```
+
+
+We can now start to create the venn diagram.
+
+
+
+```{r metaEdge110, cache=TRUE}
+venn.diagram(
+  x = list(
+    herranz = which(keepDE[, "DEherranz"] ==1),
+    dilovskaya = which(keepDE[, "DEdilovskaya"] ==1),
+    fisher = which(keepDE[, "DE.fishercomb"] ==1),
+    invnorm = which(keepDE[, "DE.invnorm"] ==1)
+  ),
+  filename = "edger-meta-onco-final.tiff",
+  col = 2,
+
+  fill = c("cornflowerblue", "green", "yellow", "darkorchid1"),
+  alpha = 0.55,
+
+  cex = 1.1,
+  fontfamily = "serif",
+  fontface = "bold",
+
+  cat.col = c("black", "black", "green", "green"),
+  cat.cex = 1.2,
+  cat.pos = 0,
+  cat.dist = 0.03228,
+  cat.fontfamily = "serif",
+  rotation.degree = 0,
+  margin = 0.01
+)
+
+```
+
+
+
+
+```{r metaEdge15510,cache=TRUE}
+
+all_true <- keepDE[apply(keepDE[,c(1,2,3,4)],1,function(z) !any(z==0)),]
+all_true <- all_true[apply(all_true[,c(1,2,3,4)],1,function(z) !any(is.na(z))),]
+sorted.csv.dge.me.onc <- all_true[order(all_true$FC2),][,c(5,6)]
+```
+#~ 
+```{r metaEdge14410,cache=TRUE}
+
+write.csv(row.names=T,sorted.csv.dge.me.onc, file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_me_oncogene-final.csv")
+```
+## analyze results
+
+We will use a python script in order to remove genes that are not 
+regarded to a membrande protein. 
+
+This will be done by using the gene info data from ncbi. 
+
+ftp://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz
+
+
+We can now load the membrane protein genes.
+
+```{r membraneLoading, cache=TRUE}
+dds_M_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dds_M_replicative-FC-01-final-membrane.csv',stringsAsFactors=FALSE)
+dds_M_oncogene <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dds_M_oncogene-FC-01-final_membrane.csv',stringsAsFactors=FALSE)
+dds_M_radiation <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dds_M_radiation-FC-01-final_membrane.csv',stringsAsFactors=FALSE)
+
+dge_M_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dge_M_replicative-final_membrane.csv',stringsAsFactors=FALSE)
+dge_M_onco <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dge_M_onco-final_membrane.csv',stringsAsFactors=FALSE)
+dge_M_ir <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dge_M_ir-final_membrane.csv',stringsAsFactors=FALSE)
+
+dge_me_oncogene <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dge_me_oncogene-final_membrane.csv',stringsAsFactors=FALSE)
+dds_me_oncogene <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dds_me_oncogene-final_membrane.csv',stringsAsFactors=FALSE)
+
+dds_me_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dds_me_replicative-final_membrane.csv',stringsAsFactors=FALSE)
+dge_me_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/membrane/dge_me_replicative-final_membrane.csv',stringsAsFactors=FALSE)
+
+
+# meta-analysis data
+
+
+dds_meta_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_replicative_membrane.csv',stringsAsFactors=FALSE)
+dds_meta_oncogene <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_oncogene_membrane.csv',stringsAsFactors=FALSE)
+dge_meta_replicative <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_replicative-final_membrane.csv',stringsAsFactors=FALSE)
+dge_meta_oncogene <- read.csv('/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_oncogene-final_membrane.csv',stringsAsFactors=FALSE)
+```
+
+We will then assing the genes as rownames. This can be handy for sorting functions etc. 
+
+#~ 
+
+```{r rownameAssinging, cache=TRUE}
+
+rownames(dds_M_replicative) <- dds_M_replicative$Genes
+dds_M_replicative$Genes <- NULL
+rownames(dds_M_oncogene) <- dds_M_oncogene$Genes
+dds_M_oncogene$Genes <- NULL
+rownames(dds_M_radiation) <- dds_M_radiation$Genes
+dds_M_radiation$Genes <- NULL
+rownames(dge_M_replicative) <- dge_M_replicative$X
+dge_M_replicative$X <- NULL
+rownames(dge_M_onco) <- dge_M_onco$X
+dge_M_onco$X <- NULL
+rownames(dge_M_ir) <- dge_M_ir$X
+dge_M_ir$X <- NULL
+rownames(dge_me_oncogene) <- dge_me_oncogene$X
+dge_me_oncogene$X <- NULL
+rownames(dge_me_replicative) <- dge_me_replicative$X
+dge_me_replicative$X <- NULL
+rownames(dds_me_oncogene) <- dds_me_oncogene$X
+dds_me_oncogene$X <- NULL
+rownames(dds_me_replicative) <- dds_me_replicative$X
+dds_me_replicative$X <- NULL
+
+# meta 
+rownames(dds_meta_replicative) <- dds_meta_replicative$X
+dds_meta_replicative$X <- NULL
+rownames(dds_meta_oncogene) <- dds_meta_oncogene$X
+dds_meta_oncogene$X <- NULL
+rownames(dge_meta_replicative) <- dge_meta_replicative$X
+dge_meta_replicative$X <- NULL
+rownames(dge_meta_oncogene) <- dge_meta_oncogene$X
+dge_meta_oncogene$X <- NULL
+
+
+
+
+
+```
+ #~ 
+
+ 
+
+
+ 
+ 
+
+## Unique for dds dge merged datasets
+
+```{r uniqueDdsRep, cache=TRUE}
+
+dds_M_replicative.unique <- setdiff(rownames(dds_M_replicative),rownames(dds_M_oncogene))
+dds_M_replicative.unique <- setdiff(dds_M_replicative.unique,rownames(dds_M_radiation))
+dds_M_replicative.unique <- dds_M_replicative[dds_M_replicative.unique,]
+dds_M_replicative.unique <- dds_M_replicative.unique[order(abs(dds_M_replicative.unique$log2FoldChange),decreasing = T),]
+
+
+nrow(dds_M_replicative.unique)
+
+dds_M_oncogene.unique <- setdiff(rownames(dds_M_oncogene),rownames(dds_M_replicative))
+dds_M_oncogene.unique <- setdiff(dds_M_oncogene.unique,rownames(dds_M_radiation))
+dds_M_oncogene.unique <- dds_M_oncogene[dds_M_oncogene.unique,]
+dds_M_oncogene.unique <- dds_M_oncogene.unique[order(abs(dds_M_oncogene.unique$log2FoldChange),decreasing = T),]
+
+nrow(dds_M_oncogene.unique)
+
+dds_M_radiation.unique <- setdiff(rownames(dds_M_radiation),rownames(dds_M_replicative))
+dds_M_radiation.unique <- setdiff(dds_M_radiation.unique,rownames(dds_M_oncogene))
+dds_M_radiation.unique <- dds_M_radiation[dds_M_radiation.unique,]
+dds_M_radiation.unique <- dds_M_radiation.unique[order(abs(dds_M_radiation.unique$log2FoldChange),decreasing = T),]
+
+nrow(dds_M_radiation.unique)
+
+
+# meta
+
+dds_meta_replicative.unique <- setdiff(rownames(dds_meta_replicative),rownames(dds_M_oncogene))
+dds_meta_replicative.unique <- setdiff(dds_meta_replicative.unique,rownames(dds_M_radiation))
+dds_meta_replicative.unique <- dds_meta_replicative[dds_meta_replicative.unique,]
+dds_meta_replicative.unique$meanFC <- rowMeans(dds_meta_replicative.unique[,c(1,2,3)])
+dds_meta_replicative.unique <- dds_meta_replicative.unique[order(abs(dds_meta_replicative.unique$meanFC),decreasing = T),]
+
+
+nrow(dds_meta_replicative.unique)
+
+dds_meta_oncogene.unique <- setdiff(rownames(dds_meta_oncogene),rownames(dds_M_replicative))
+dds_meta_oncogene.unique <- setdiff(dds_meta_oncogene.unique,rownames(dds_M_radiation))
+dds_meta_oncogene.unique <- dds_meta_oncogene[dds_meta_oncogene.unique,]
+dds_meta_oncogene.unique$meanFC <- rowMeans(dds_meta_oncogene.unique[,c(1,2)])
+dds_meta_oncogene.unique <- dds_meta_oncogene.unique[order(abs(dds_meta_oncogene.unique$meanFC),decreasing = T),]
+
+nrow(dds_meta_oncogene.unique)
+
+```
+
+
+We can also find unique genes usesing the deseq data.
+
+
+
+```{r uniqueDgeRep, cache=TRUE}
+dge_M_replicative.unique <- setdiff(rownames(dge_M_replicative),rownames(dge_M_onco))
+dge_M_replicative.unique <- setdiff(dge_M_replicative.unique,rownames(dge_M_ir))
+dge_M_replicative.unique <- dge_M_replicative[dge_M_replicative.unique,]
+dge_M_replicative.unique <- dge_M_replicative.unique[order(abs(dge_M_replicative.unique$logFC),decreasing = T),]
+
+nrow(dge_M_replicative.unique)
+
+dge_M_oncogene.unique <- setdiff(rownames(dge_M_onco),rownames(dge_M_replicative))
+dge_M_oncogene.unique <- setdiff(dge_M_oncogene.unique,rownames(dge_M_ir))
+dge_M_oncogene.unique <- dge_M_onco[dge_M_oncogene.unique,]
+dge_M_oncogene.unique <- dge_M_oncogene.unique[order(abs(dge_M_oncogene.unique$logFC),decreasing = T),]
+nrow(dge_M_oncogene.unique)
+
+dge_M_radiation.unique <- setdiff(rownames(dge_M_ir),rownames(dge_M_replicative))
+dge_M_radiation.unique <- setdiff(dge_M_radiation.unique,rownames(dge_M_onco))
+dge_M_radiation.unique <- dge_M_ir[dge_M_radiation.unique,]
+dge_M_radiation.unique <- dge_M_radiation.unique[order(abs(dge_M_radiation.unique$logFC),decreasing = T),]
+nrow(dge_M_radiation.unique)
+
+
+#meta 
+
+
+dge_meta_replicative.unique <- setdiff(rownames(dge_meta_replicative),rownames(dds_M_oncogene))
+dge_meta_replicative.unique <- setdiff(dge_meta_replicative.unique,rownames(dds_M_radiation))
+dge_meta_replicative.unique <- dge_meta_replicative[dge_meta_replicative.unique,]
+dge_meta_replicative.unique$meanFC <- rowMeans(dge_meta_replicative.unique[,c(1,2,3)])
+dge_meta_replicative.unique <- dge_meta_replicative.unique[order(abs(dge_meta_replicative.unique$meanFC),decreasing = T),]
+
+
+
+nrow(dge_meta_replicative.unique)
+
+dge_meta_oncogene.unique <- setdiff(rownames(dge_meta_oncogene),rownames(dds_M_replicative))
+dge_meta_oncogene.unique <- setdiff(dge_meta_oncogene.unique,rownames(dds_M_radiation))
+dge_meta_oncogene.unique <- dge_meta_oncogene[dge_meta_oncogene.unique,]
+dge_meta_oncogene.unique$meanFC <- rowMeans(dge_meta_oncogene.unique[,c(1,2)])
+dge_meta_oncogene.unique <- dge_meta_oncogene.unique[order(abs(dge_meta_oncogene.unique$meanFC),decreasing = T),]
+
+nrow(dge_meta_oncogene.unique)
+
+
+
+
+
+```
+
+## get the genes for dds
+
+
+```{r getddshfclfc, cache=TRUE}
+
+plot(dds_M_replicative.unique$log2FoldChange)
+percentage.trashold <- 3
+values.use <- floor((length(dds_M_replicative.unique$log2FoldChange)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dds_M_replicative.unique$log2FoldChange)-values.use,col="red")
+dds_M_replicative.unique.highFC <- head(dds_M_replicative.unique,n = values.use)
+dds_M_replicative.unique.lowFC <- tail(dds_M_replicative.unique,n = values.use)
+
+
+plot(dds_M_oncogene.unique$log2FoldChange)
+percentage.trashold <- 5
+values.use <- floor((length(dds_M_oncogene.unique$log2FoldChange)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dds_M_oncogene.unique$log2FoldChange)-values.use,col="red")
+dds_M_oncogene.unique.highFC <- head(dds_M_oncogene.unique,n = values.use)
+dds_M_oncogene.unique.lowFC <- tail(dds_M_oncogene.unique,n = values.use)
+
+plot(dds_M_radiation.unique$log2FoldChange)
+percentage.trashold <- 8
+values.use <- floor((length(dds_M_radiation.unique$log2FoldChange)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dds_M_radiation.unique$log2FoldChange)-values.use,col="red")
+dds_M_radiation.unique.highFC <- head(dds_M_radiation.unique,n = values.use)
+dds_M_radiation.unique.lowFC <- tail(dds_M_radiation.unique,n = values.use)
+
+```
+#~ 
+#~ ## get the genes for dge
+#~ 
+
+```{r getdgehfclfc, cache=TRUE}
+
+plot(dge_M_replicative.unique$logFC)
+percentage.trashold <- 3
+values.use <- floor((length(dge_M_replicative.unique$logFC)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dge_M_replicative.unique$logFC)-values.use,col="red")
+dge_M_replicative.unique.highFC <- head(dge_M_replicative.unique,n = values.use)
+dge_M_replicative.unique.lowFC <- tail(dge_M_replicative.unique,n = values.use)
+
+plot(dge_M_oncogene.unique$logFC)
+percentage.trashold <- 3
+values.use <- floor((length(dge_M_oncogene.unique$logFC)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dge_M_oncogene.unique$logFC)-values.use,col="red")
+dge_M_oncogene.unique.highFC <- head(dge_M_oncogene.unique,n = values.use)
+dge_M_oncogene.unique.lowFC <- tail(dge_M_oncogene.unique,n = values.use)
+
+plot(dge_M_radiation.unique$logFC)
+percentage.trashold <- 8
+values.use <- floor((length(dge_M_radiation.unique$logFC)/100)*percentage.trashold)
+abline(v = values.use,col="red")
+abline(v = length(dge_M_radiation.unique$logFC)-values.use,col="red")
+dge_M_radiation.unique.highFC <- head(dge_M_radiation.unique,n = values.use)
+dge_M_radiation.unique.lowFC <- tail(dge_M_radiation.unique,n = values.use)
+
+
+
+
+```
+
+##Vulcanoplots
+
+
+
+```{r heatmapResults, cache=TRUE, out.width = "900px"}
+
+
+VulcanoRNASEQPlotterDds <- function(x,xlim=c(-8,8)){
+
+res <- x
+# Make a basic volcano plot
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot\nDE genes DESeq", xlim=c(xlim)))
+# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
+with(subset(res, padj<.01 ), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+with(subset(res, abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="orange"))
+with(subset(res, padj<.01 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="green"))
+# Label points with the textxy function from the calibrate plot
+library(calibrate)
+with(subset(res, padj<.01 & abs(log2FoldChange)>1), textxy(log2FoldChange, -log10(pvalue), labs=GeneName, cex=.8))
+
+
+}
+
+
+VulcanoRNASEQPlotterDge <- function(x,xlim=c(-8,8)){
+
+res <- x
+
+with(res, plot(logFC, -log10(PValue), pch=20, main="Volcano plot\nDE genes EdgeR", xlim=c(xlim)))
+# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
+with(subset(res, FDR<.01 ), points(logFC, -log10(PValue), pch=20, col="red"))
+with(subset(res, abs(logFC)>1), points(logFC, -log10(PValue), pch=20, col="orange"))
+with(subset(res, FDR<.01 & abs(logFC)>1), points(logFC, -log10(PValue), pch=20, col="green"))
+# Label points with the textxy function from the calibrate plot
+library(calibrate)
+with(subset(res, FDR<.01 & abs(logFC)>1), textxy(logFC, -log10(PValue), labs=GeneName, cex=.8))
+}
+
+
+```
+
+```{r Volcano2 , cache=TRUE, out.width = "900px", out.height = "900px"}
+
+
+
+
+
+library(ggplot2)
+library(gridExtra)
+
+# Load packages
+library(dplyr)
+library(ggplot2)
+
+
+
+
+
+MultiVolcanoPlotDds <- function(x,ggTitle){
+
+results = x
+results = mutate(results, sig=ifelse(results$padj<1e-3, "FDR<1e-3", "Not Significant"))
+p = ggplot(results, aes(log2FoldChange, -log10(pvalue))) +
+
+
+ggtitle(ggTitle) +
+
+
+  geom_point(aes(col=sig)) +
+  scale_color_manual(values=c("red", "black"))
+p <- p+geom_text(data=filter(results, padj<1e-3),size = 3, aes(label=GeneName))
+rect <- data.frame(xmin=-0.5, xmax=0.5, ymin=-Inf, ymax=Inf)
+p <- p + geom_rect(data=rect, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+              color="red",
+              alpha=0.2,
+              inherit.aes = FALSE) + 
+   theme(
+   
+   panel.border = element_rect(linetype = "dashed", colour = "black",fill=NA),
+            axis.text = element_text(colour = "black",size=rel(0.8)),
+            axis.title.x = element_text(colour = "black", size=rel(0.8)),
+            axis.title.y = element_text(colour = "black",size=rel(0.8)),
+            panel.background = element_rect(fill="white"),
+            panel.grid.major = element_line(colour = "gold"),
+            plot.background = element_rect(fill="white"),
+            plot.title = element_text(size = 10, face = "bold")
+                
+    )
+    
+    return(p)
+
+
+}
+
+
+
+
+MultiVolcanoPlotDge <- function(x,ggTitle){
+
+results = x
+results = mutate(results, Significant=ifelse(results$FDR<1e-3, "FDR<1e-3", "Not Significant"))
+p = ggplot(results, aes(logFC, -log10(PValue))) +
+
+
+
+
+ggtitle(ggTitle) +
+
+  geom_point(aes(col=Significant)) +
+  scale_color_manual(values=c("red", "black"))
+p <- p+geom_text(data=filter(results, FDR<1e-3),size = 3 ,aes(label=GeneName))
+rect <- data.frame(xmin=-0.5, xmax=0.5, ymin=-Inf, ymax=Inf)
+p <- p + geom_rect(data=rect, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+              color="red",
+              alpha=0.2,
+              inherit.aes = FALSE) + 
+   theme(
+   
+   panel.border = element_rect(linetype = "dashed", colour = "black",fill=NA),
+            axis.text = element_text(colour = "black",size=rel(0.8)),
+            axis.title.x = element_text(colour = "black", size=rel(0.8)),
+            axis.title.y = element_text(colour = "black",size=rel(0.8)),
+            panel.background = element_rect(fill="white"),
+            panel.grid.major = element_line(colour = "gold"),
+            plot.background = element_rect(fill="white"),
+            plot.title = element_text(size = 10, face = "bold")
+                
+    )
+    
+    return(p)
+
+
+}
+
+
+p1 <- MultiVolcanoPlotDds(dds_M_replicative.unique,"a) DESeq2 Replicative")
+p2 <- MultiVolcanoPlotDds(dds_M_oncogene.unique,"b) DESeq2 Oncogene")
+p3 <- MultiVolcanoPlotDds(dds_M_radiation.unique,"c) DESeq2 Radiation")
+
+p4 <- MultiVolcanoPlotDge(dge_M_replicative.unique,"d) EdgeR Replicative")
+p5 <- MultiVolcanoPlotDge(dge_M_oncogene.unique,"e) EdgeR Oncogene")
+p6 <- MultiVolcanoPlotDge(dge_M_radiation.unique,"f) EdgeR Radiation")
+
+#~ 
+#~ 
+
+#extract legend
+#https://github.com/hadley/ggplot2/wiki/Share-a-legend-between-two-ggplot2-graphs
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend<-g_legend(p1)
+
+p3 <- grid.arrange(top = "Volcano plots of significant genes EdgeR/DESeq2",arrangeGrob(p1 + theme(legend.position="none"),
+p2 + theme(legend.position="none"),
+p3 + theme(legend.position="none"),
+p4 + theme(legend.position="none"),
+p5 + theme(legend.position="none"),
+p6 + theme(legend.position="none"),
+
+nrow=2),
+mylegend, nrow=2,heights=c(5, 1)) 
+
+
+#~ grid.arrange(p,p,p,p,p, top = "Title",
+            #~ layout_matrix = matrix(c(1,2,3,4,5,5), ncol=2, byrow=TRUE))
+
+```
+#~ ```{r heatmapResults2, cache=TRUE}
+#~ rep <- matrix(dge_M_replicative.unique$logFC)
+#~ rownames(rep) <- rownames(dds_M_replicative.unique)
+#~ colnames(rep) <- "Replicative"
+#~ 
+#~ onc <- matrix(dge_M_oncogene.unique$logFC)
+#~ rownames(onc) <- rownames(dds_M_oncogene.unique)
+#~ colnames(onc) <- "Oncogene"
+#~ 
+#~ rad <- matrix(dge_M_radiation.unique$logFC)
+#~ rownames(rad) <- rownames(dds_M_radiation.unique)
+#~ colnames(rad) <- "Radiation"
+#~ 
+#~ merged <- merge(rep, rad ,  by = 0, all = TRUE)
+#~ rownames(merged) <- merged$Row.names
+#~ merged <- merged[,c(2,3)]
+#~ merged <- merge(merged, onc ,  by = 0, all = TRUE)
+#~ 
+#~ rownames(merged) <- merged$Row.names
+#~ merged <- merged[,c(2,3,4)]
+#~ 
+#~ repOncIr.heatmap.data <- merged
+#~ 
+#~ merged[is.na(merged)] <- 0
+#~ repOncIr.heatmap.data[is.na(repOncIr.heatmap.data)] <- 0
+#~ 
+#~ repOncIr.heatmap.data <- as.data.frame(repOncIr.heatmap.data)
+#~ 
+#~ paletteLength <- 4000
+#~ myColor <- colorRampPalette(c("red", "black", "green"))(paletteLength)
+#~ # length(breaks) == length(paletteLength) + 1
+#~ # use floor and ceiling to deal with even/odd length pallettelengths
+#~ myBreaks <- c(seq(min(repOncIr.heatmap.data), 0, length.out=ceiling(paletteLength/2) ), 
+              #~ seq(max(repOncIr.heatmap.data)/paletteLength, max(repOncIr.heatmap.data), length.out=floor(paletteLength/2)))
+#~ pheatmap(merged, 
+#~ color=myColor, 
+#~ breaks=myBreaks,
+#~ show_rownames=F,
+  #~ fontsize=11,
+  #~ fontsize_row = 11,
+  #~ border_color=NA,
+  #~ cluster_cols = FALSE,
+  #~ height=1000
+  #~ 
+#~ 
+#~ )
+#~ ```
+
+
+
+
+
+
+
+write.csv(row.names=T,head(dds_M_replicative.unique[which(abs(dds_M_replicative.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-rep-M.csv")
+write.csv(row.names=T,head(dds_M_oncogene.unique[which(abs(dds_M_oncogene.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-onc-M.csv")
+write.csv(row.names=T,head(dds_M_radiation.unique[which(abs(dds_M_radiation.unique$padj) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds-ir-M.csv")
+
+write.csv(row.names=T,head(dge_M_replicative.unique[which(abs(dge_M_replicative.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-rep-M.csv")
+write.csv(row.names=T,head(dge_M_oncogene.unique[which(abs(dge_M_oncogene.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-onc-M.csv")
+write.csv(row.names=T,head(dge_M_radiation.unique[which(abs(dge_M_radiation.unique$PValue) < 1e-12),])[,c(1,4,5,6)], file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge-ir-M.csv")
+
+
+#meta 
+
+write.csv(row.names=T,head(dds_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_replicative.csv")
+write.csv(row.names=T,head(dds_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dds_meta_oncogene.csv")
+write.csv(row.names=T,head(dge_meta_replicative.unique[,c(4,5)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_replicative.csv")
+write.csv(row.names=T,head(dge_meta_oncogene.unique[,c(3,4)]), file="/home/ghost/Desktop/stage/scripts/R/resultsCsvFinal/dge_meta_oncogene.csv")
+
+
+
+
+
+head(dge_M_replicative.unique[which(abs(dge_M_replicative.unique$padj) < 1e-12),])
+
+
+
+
